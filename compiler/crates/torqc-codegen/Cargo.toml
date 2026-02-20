@@ -1,0 +1,17 @@
+[package]
+name = "torqc-codegen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+torqc-ast = { path = "../torqc-ast" }
+cranelift-codegen = "0.128"
+cranelift-frontend = "0.128"
+cranelift-module = "0.128"
+cranelift-object = "0.128"
+cranelift-native = "0.128"
+target-lexicon = "0.13"
+
+[dev-dependencies]
+torqc-lexer = { path = "../torqc-lexer" }
+torqc-parser = { path = "../torqc-parser" }
