@@ -256,6 +256,14 @@ pub enum Token {
     #[token("%")]
     Percent,
 
+    /// `!` — standalone bang (for !{...} error dict literals)
+    #[token("!")]
+    Bang,
+
+    /// `@` — standalone at (for @[...] typed array literals)
+    #[token("@")]
+    At,
+
     /// `.` — dot
     #[token(".")]
     Dot,

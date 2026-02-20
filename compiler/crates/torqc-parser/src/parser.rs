@@ -136,8 +136,48 @@ impl Parser {
                 break;
             }
             let stmt = self.parse_statement()?;
+
+            // Multi-line pipeline continuation: if the next non-newline token
+            // is `|`, continue the current statement as a pipeline.
+            let stmt = self.continue_multiline_pipeline(stmt)?;
+
             stmts.push(stmt);
+
+            // After pushing a statement (which may be Each, Loop, etc.),
+            // check if there are further `|` continuation lines that couldn't
+            // be merged. Parse them as implicit-input pipeline statements.
             self.skip_newlines();
+            while self.peek_past_newlines_is_pipe() || self.check_token(Token::Pipe) {
+                self.skip_newlines();
+                if !self.check_token(Token::Pipe) {
+                    break;
+                }
+                // Parse `| stage | stage ...` as a pipeline from implicit _pipe
+                let span = self.current_span();
+                self.advance(); // consume `|`
+
+                let stage = self.parse_pipe_stage_expr()?;
+                let mut stages = vec![
+                    Expr::Variable(Variable {
+                        sigil: Sigil::Scalar,
+                        name: "_pipe".to_string(),
+                        span: span.clone(),
+                    }),
+                    stage,
+                ];
+
+                // Inline continuation on same line
+                while self.check_token(Token::Pipe) {
+                    self.advance();
+                    let expr = self.parse_pipe_stage_expr()?;
+                    stages.push(expr);
+                }
+
+                let pipeline_stmt = Statement::Pipeline(Pipeline { stages, span });
+                let pipeline_stmt = self.continue_multiline_pipeline(pipeline_stmt)?;
+                stmts.push(pipeline_stmt);
+                self.skip_newlines();
+            }
         }
 
         if self.check_lex(LexToken::Dedent) {
@@ -145,6 +185,137 @@ impl Parser {
         }
 
         Ok(stmts)
+    }
+
+    /// If the next non-newline token is `|`, continue the statement as a
+    /// multi-line pipeline by consuming additional pipe stages across lines.
+    fn continue_multiline_pipeline(&mut self, stmt: Statement) -> Result<Statement, ParseError> {
+        // Peek ahead past newlines to see if next real token is Pipe
+        if !self.peek_past_newlines_is_pipe() {
+            return Ok(stmt);
+        }
+
+        // Convert the statement to an initial set of pipeline stages
+        let span = self.stmt_span(&stmt);
+        let mut stages = match stmt {
+            Statement::Pipeline(p) => p.stages,
+            Statement::Expression(e) => vec![e],
+            Statement::Assignment(a) => {
+                // An assignment followed by `| ...` on the next line:
+                // the assignment result feeds into the pipeline.
+                // We wrap it back as-is and continue.
+                // Actually, this pattern means: `expr -> $var` then `| more`.
+                // This is unusual; treat the assignment value as the pipeline source
+                // and add more stages, then re-assign.
+                let mut stages = match *a.value {
+                    Expr::Pipeline(p) => p.stages,
+                    other => vec![other],
+                };
+                // Consume the continuation pipe stages
+                while self.peek_past_newlines_is_pipe() {
+                    self.skip_newlines();
+                    self.advance(); // consume `|`
+                    if self.check_token(Token::Each) {
+                        let each_stmt = self.parse_pipeline_each(stages)?;
+                        return Ok(each_stmt);
+                    }
+                    if self.check_token(Token::Match) {
+                        let match_expr = self.parse_match_expr()?;
+                        stages.push(match_expr);
+                        let pipeline = Pipeline { stages, span: span.clone() };
+                        return Ok(Statement::Assignment(Assignment {
+                            target: a.target,
+                            value: Box::new(Expr::Pipeline(pipeline)),
+                            span,
+                        }));
+                    }
+                    let stage_expr = self.parse_pipe_stage_expr()?;
+                    stages.push(stage_expr);
+                }
+                let value = if stages.len() == 1 {
+                    stages.remove(0)
+                } else {
+                    Expr::Pipeline(Pipeline { stages, span: span.clone() })
+                };
+                return Ok(Statement::Assignment(Assignment {
+                    target: a.target,
+                    value: Box::new(value),
+                    span,
+                }));
+            }
+            other => return Ok(other), // Each, Loop — don't continue
+        };
+
+        // Consume continuation pipe stages across lines
+        while self.peek_past_newlines_is_pipe() {
+            self.skip_newlines();
+            self.advance(); // consume `|`
+
+            if self.check_token(Token::Each) {
+                return self.parse_pipeline_each(stages);
+            }
+
+            if self.check_token(Token::Match) {
+                let match_expr = self.parse_match_expr()?;
+                stages.push(match_expr);
+                let pipeline = Pipeline { stages, span };
+                return Ok(Statement::Pipeline(pipeline));
+            }
+
+            let stage_expr = self.parse_pipe_stage_expr()?;
+            stages.push(stage_expr);
+
+            // After a pipe stage, check for inline `| ...` on the same line too
+            while self.check_token(Token::Pipe) {
+                self.advance(); // consume `|`
+                if self.check_token(Token::Each) {
+                    return self.parse_pipeline_each(stages);
+                }
+                if self.check_token(Token::Match) {
+                    let match_expr = self.parse_match_expr()?;
+                    stages.push(match_expr);
+                    let pipeline = Pipeline { stages, span };
+                    return Ok(Statement::Pipeline(pipeline));
+                }
+                let expr = self.parse_pipe_stage_expr()?;
+                stages.push(expr);
+            }
+        }
+
+        if stages.len() == 1 {
+            Ok(Statement::Expression(stages.remove(0)))
+        } else {
+            Ok(Statement::Pipeline(Pipeline { stages, span }))
+        }
+    }
+
+    /// Look ahead past newlines to check if the next real token is Pipe,
+    /// without advancing the parser position.
+    fn peek_past_newlines_is_pipe(&self) -> bool {
+        let mut offset = 0;
+        loop {
+            let idx = self.pos + offset;
+            if idx >= self.tokens.len() {
+                return false;
+            }
+            match &self.tokens[idx].token {
+                LexToken::Token(Token::Newline) => {
+                    offset += 1;
+                }
+                LexToken::Token(Token::Pipe) => return true,
+                _ => return false,
+            }
+        }
+    }
+
+    fn stmt_span(&self, stmt: &Statement) -> Span {
+        match stmt {
+            Statement::Pipeline(p) => p.span.clone(),
+            Statement::Assignment(a) => a.span.clone(),
+            Statement::Each(e) => e.span.clone(),
+            Statement::Loop(l) => l.span.clone(),
+            Statement::Expression(e) => self.expr_span(e),
+        }
     }
 
     // ── statement ───────────────────────────────────────────────────
@@ -680,16 +851,37 @@ impl Parser {
 
     fn parse_call_or_primary(&mut self) -> Result<Expr, ParseError> {
         // Block call: `::name args...`
-        if self.check_token(Token::BlockName) {
-            return self.parse_block_call();
-        }
+        let expr = if self.check_token(Token::BlockName) {
+            self.parse_block_call()?
+        } else if self.check_token(Token::Ident) || self.is_callable_keyword() {
+            // Function call: `ident args...` or keyword-as-function
+            self.parse_function_call_or_ident()?
+        } else {
+            self.parse_primary_expr()?
+        };
 
-        // Function call: `ident args...` or keyword-as-function
-        if self.check_token(Token::Ident) || self.is_callable_keyword() {
-            return self.parse_function_call_or_ident();
-        }
+        // Handle postfix member access: `expr.field.field...`
+        self.parse_postfix_member_access(expr)
+    }
 
-        self.parse_primary_expr()
+    fn parse_postfix_member_access(&mut self, mut expr: Expr) -> Result<Expr, ParseError> {
+        while self.check_token(Token::Dot) {
+            // Only consume if followed by an identifier (to avoid consuming `.` in other contexts)
+            if self.peek_token_at(1) == Some(Token::Ident) {
+                let span = self.current_span();
+                self.advance(); // consume `.`
+                let field = self.current_text().to_string();
+                self.advance(); // consume field name
+                expr = Expr::MemberAccess(MemberAccess {
+                    object: Box::new(expr),
+                    field,
+                    span,
+                });
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
     }
 
     fn parse_block_call(&mut self) -> Result<Expr, ParseError> {
@@ -752,6 +944,10 @@ impl Parser {
                     | Token::Csv
                     | Token::Toml
                     | Token::Data
+                    | Token::As
+                    | Token::To
+                    | Token::Where
+                    | Token::By
             )
         )
     }
@@ -788,8 +984,11 @@ impl Parser {
                     | Token::LParen
                     | Token::BlockName
                     | Token::Percent
+                    | Token::Bang
+                    | Token::At
+                    | Token::Ident
             )
-        )
+        ) || self.is_keyword_as_arg()
     }
 
     /// Parse arguments for a function or block call.
@@ -798,8 +997,29 @@ impl Parser {
         let mut args = Vec::new();
 
         while self.has_call_args() {
-            let arg = self.parse_primary_expr()?;
-            args.push(arg);
+            if self.check_token(Token::Ident) || self.is_keyword_as_arg() {
+                // Bare ident/keyword in call arg position
+                let span = self.current_span();
+                let name = self.current_text().to_string();
+                self.advance();
+
+                // Handle `key=value` named argument pattern (e.g. `template="receipt"`)
+                if self.check_token(Token::Eq) {
+                    self.advance(); // consume `=`
+                    let value = self.parse_primary_expr()?;
+                    // Represent as a Call with the name and value as arg
+                    args.push(Expr::Call(Call { name, args: vec![value], span }));
+                } else if self.has_call_args() {
+                    // Check if this ident has its own args (nested call)
+                    let inner_args = self.parse_call_args()?;
+                    args.push(Expr::Call(Call { name, args: inner_args, span }));
+                } else {
+                    args.push(Expr::Call(Call { name, args: Vec::new(), span }));
+                }
+            } else {
+                let arg = self.parse_primary_expr()?;
+                args.push(arg);
+            }
         }
 
         Ok(args)
@@ -811,6 +1031,11 @@ impl Parser {
     /// In pipe context, `.field` is a member access on the implicit pipe input,
     /// and function calls can include inline binary ops like `filter .age > 18`.
     fn parse_pipe_stage_expr(&mut self) -> Result<Expr, ParseError> {
+        // Block call in pipe: `| ::name args...`
+        if self.check_token(Token::BlockName) {
+            return self.parse_block_call();
+        }
+
         // A pipe stage is typically a call expression: `filter .age > 18`, `map .name`, `print`
         if self.check_token(Token::Ident) || self.is_callable_keyword() {
             let span = self.current_span();
@@ -822,6 +1047,35 @@ impl Parser {
             while self.has_pipe_stage_args() {
                 let arg = self.parse_pipe_arg()?;
                 args.push(arg);
+            }
+
+            // Handle `-> expr` as part of a pipe stage call (e.g. `fail -> expr`,
+            // `route get "/path" -> ::handler`). In pipe context, `->` followed
+            // by a non-variable expression (block call, function, literal, etc.)
+            // is part of the call, not an assignment.
+            if self.check_token(Token::Arrow) {
+                // Peek at what follows the arrow
+                let next = self.peek_token_at(1);
+                let arrow_is_arg = matches!(
+                    next,
+                    Some(Token::BlockName)
+                        | Some(Token::Ident)
+                        | Some(Token::Bang)
+                        | Some(Token::At)
+                        | Some(Token::Percent)
+                        | Some(Token::Int)
+                        | Some(Token::Float)
+                        | Some(Token::StringLit)
+                        | Some(Token::LBrace)
+                        | Some(Token::LBracket)
+                        | Some(Token::LParen)
+                ) || self.peek_is_callable_keyword_at(1);
+
+                if arrow_is_arg {
+                    self.advance(); // consume `->`
+                    let handler = self.parse_pipe_stage_expr()?;
+                    args.push(handler);
+                }
             }
 
             if args.is_empty() {
@@ -880,19 +1134,92 @@ impl Parser {
                     | Token::LtEq
                     | Token::NotEq
                     | Token::Percent
+                    | Token::Bang
+                    | Token::At
                     | Token::Plus
                     | Token::Minus
                     | Token::Star
                     | Token::Slash
+                    | Token::Ident
             )
-        )
+        ) || self.is_keyword_as_arg()
     }
 
     fn parse_pipe_arg(&mut self) -> Result<Expr, ParseError> {
-        if self.check_token(Token::Dot) {
-            self.parse_dot_access()
+        let expr = if self.check_token(Token::Dot) {
+            self.parse_dot_access()?
+        } else if self.check_token(Token::Ident) || self.is_keyword_as_arg() {
+            // In pipe arg context, a bare ident/keyword is a simple call or value
+            let span = self.current_span();
+            let name = self.current_text().to_string();
+            self.advance();
+
+            // Handle `key=value` named argument pattern
+            if self.check_token(Token::Eq) {
+                self.advance(); // consume `=`
+                let value = self.parse_primary_expr()?;
+                Expr::Call(Call { name, args: vec![value], span })
+            } else {
+                Expr::Call(Call {
+                    name,
+                    args: Vec::new(),
+                    span,
+                })
+            }
+        } else if self.is_comparison_op() {
+            // Comparison operators in pipe arg context: `>= 18`, `> 100`, etc.
+            // These form a comparison with the implicit pipe value
+            let span = self.current_span();
+            let op = self.parse_binop_comparison_op().unwrap();
+            self.advance(); // consume operator
+            let right = self.parse_primary_expr()?;
+            return Ok(Expr::BinOp(BinOp {
+                left: Box::new(Expr::Variable(Variable {
+                    sigil: Sigil::Scalar,
+                    name: "_".to_string(),
+                    span: span.clone(),
+                })),
+                op,
+                right: Box::new(right),
+                span,
+            }));
         } else {
-            self.parse_primary_expr()
+            self.parse_primary_expr()?
+        };
+
+        // After parsing a member access or expr, check for a comparison operator
+        // to handle `filter .age >= 18` as a compound arg
+        if self.is_comparison_op() {
+            let span = self.expr_span(&expr);
+            let op = self.parse_binop_comparison_op().unwrap();
+            self.advance(); // consume operator
+            let right = self.parse_primary_expr()?;
+            Ok(Expr::BinOp(BinOp {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+                span,
+            }))
+        } else {
+            Ok(expr)
+        }
+    }
+
+    fn is_comparison_op(&self) -> bool {
+        matches!(
+            self.current_token(),
+            Some(Token::Gt | Token::Lt | Token::GtEq | Token::LtEq | Token::NotEq)
+        )
+    }
+
+    fn parse_binop_comparison_op(&self) -> Option<BinOpKind> {
+        match self.current_token() {
+            Some(Token::Gt) => Some(BinOpKind::Gt),
+            Some(Token::Lt) => Some(BinOpKind::Lt),
+            Some(Token::GtEq) => Some(BinOpKind::GtEq),
+            Some(Token::LtEq) => Some(BinOpKind::LtEq),
+            Some(Token::NotEq) => Some(BinOpKind::NotEq),
+            _ => None,
         }
     }
 
@@ -940,6 +1267,16 @@ impl Parser {
         // Dict with percent sigil: `%{ key "value" ... }`
         if self.check_token(Token::Percent) && self.peek_token_at(1) == Some(Token::LBrace) {
             return self.parse_dict_percent();
+        }
+
+        // Error dict: `!{ key "value" ... }`
+        if self.check_token(Token::Bang) && self.peek_token_at(1) == Some(Token::LBrace) {
+            return self.parse_dict_bang();
+        }
+
+        // Typed array: `@[ ... ]`
+        if self.check_token(Token::At) && self.peek_token_at(1) == Some(Token::LBracket) {
+            return self.parse_array_at();
         }
 
         // Block reference: `&::name`
@@ -1014,8 +1351,29 @@ impl Parser {
         let span = self.current_span();
         self.advance(); // consume `(`
         let expr = self.parse_expr()?;
-        self.expect_token(Token::RParen)?;
-        Ok(Expr::Group(Box::new(expr), span))
+
+        // Handle inline pipeline inside group: `(expr | stage | stage)`
+        if self.check_token(Token::Pipe) {
+            let mut stages = vec![expr];
+            while self.check_token(Token::Pipe) {
+                self.advance(); // consume `|`
+                let stage = self.parse_pipe_stage_expr()?;
+                stages.push(stage);
+            }
+            self.expect_token(Token::RParen)?;
+            let inner = if stages.len() == 1 {
+                stages.remove(0)
+            } else {
+                Expr::Pipeline(Pipeline {
+                    stages,
+                    span: span.clone(),
+                })
+            };
+            Ok(Expr::Group(Box::new(inner), span))
+        } else {
+            self.expect_token(Token::RParen)?;
+            Ok(Expr::Group(Box::new(expr), span))
+        }
     }
 
     fn parse_array(&mut self) -> Result<Expr, ParseError> {
@@ -1025,11 +1383,15 @@ impl Parser {
 
         while !self.check_token(Token::RBracket) && !self.at_eof() {
             self.skip_newlines();
+            self.skip_indent_dedent();
+            self.skip_newlines();
             if self.check_token(Token::RBracket) {
                 break;
             }
             let elem = self.parse_expr()?;
             elements.push(elem);
+            self.skip_newlines();
+            self.skip_indent_dedent();
             self.skip_newlines();
         }
 
@@ -1054,10 +1416,34 @@ impl Parser {
         Ok(Expr::Dict(entries, span))
     }
 
+    fn parse_dict_bang(&mut self) -> Result<Expr, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `!`
+        self.advance(); // consume `{`
+        let entries = self.parse_dict_entries()?;
+        self.expect_token(Token::RBrace)?;
+        Ok(Expr::Dict(entries, span))
+    }
+
+    fn parse_array_at(&mut self) -> Result<Expr, ParseError> {
+        let span = self.current_span();
+        self.advance(); // consume `@`
+        // Now parse the regular array (current token is `[`)
+        self.parse_array().map(|expr| {
+            // Re-wrap with the span starting at `@`
+            match expr {
+                Expr::Array(elems, _) => Expr::Array(elems, span),
+                other => other,
+            }
+        })
+    }
+
     fn parse_dict_entries(&mut self) -> Result<Vec<DictEntry>, ParseError> {
         let mut entries = Vec::new();
 
         loop {
+            self.skip_newlines();
+            self.skip_indent_dedent();
             self.skip_newlines();
             if self.check_token(Token::RBrace) || self.at_eof() {
                 break;
@@ -1093,9 +1479,49 @@ impl Parser {
             });
 
             self.skip_newlines();
+            self.skip_indent_dedent();
+            self.skip_newlines();
         }
 
         Ok(entries)
+    }
+
+    /// Keywords that can appear as arguments in function/block calls.
+    /// In TORQ, many keywords double as bare identifiers in argument position.
+    fn is_keyword_as_arg(&self) -> bool {
+        matches!(
+            self.current_token(),
+            Some(
+                Token::Required
+                    | Token::Binary
+                    | Token::Recursive
+                    | Token::Backoff
+                    | Token::Exponential
+                    | Token::Sequential
+                    | Token::Json
+                    | Token::Xml
+                    | Token::Yaml
+                    | Token::Csv
+                    | Token::Toml
+                    | Token::Data
+                    | Token::Redirect
+                    | Token::Template
+                    | Token::Timeout
+                    | Token::Rollback
+                    | Token::Respond
+                    | Token::Retry
+                    | Token::Fail
+                    | Token::Delay
+                    | Token::Validate
+                    | Token::Range
+                    | Token::As
+                    | Token::To
+                    | Token::Where
+                    | Token::By
+                    | Token::Desc
+                    | Token::Match
+            )
+        )
     }
 
     fn is_keyword_usable_as_key(&self) -> bool {
@@ -1464,6 +1890,34 @@ impl Parser {
         }
     }
 
+    fn peek_is_callable_keyword_at(&self, offset: usize) -> bool {
+        matches!(
+            self.peek_token_at(offset),
+            Some(
+                Token::Range
+                    | Token::Respond
+                    | Token::Retry
+                    | Token::Fail
+                    | Token::Delay
+                    | Token::Redirect
+                    | Token::Validate
+                    | Token::Template
+                    | Token::Timeout
+                    | Token::Rollback
+                    | Token::Json
+                    | Token::Xml
+                    | Token::Yaml
+                    | Token::Csv
+                    | Token::Toml
+                    | Token::Data
+                    | Token::As
+                    | Token::To
+                    | Token::Where
+                    | Token::By
+            )
+        )
+    }
+
     fn expect_token(&mut self, expected: Token) -> Result<(), ParseError> {
         if self.check_token(expected.clone()) {
             self.advance();
@@ -1494,6 +1948,12 @@ impl Parser {
 
     fn skip_newlines(&mut self) {
         while self.at_newline() {
+            self.advance();
+        }
+    }
+
+    fn skip_indent_dedent(&mut self) {
+        while self.check_lex(LexToken::Indent) || self.check_lex(LexToken::Dedent) {
             self.advance();
         }
     }
