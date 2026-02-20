@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::codegen::CodegenError;
+use crate::runtime::RUNTIME_C_SOURCE;
 
 /// Detect the architecture of a Mach-O object file from its header bytes.
 /// Returns the `-arch` flag value for Apple's linker (e.g., "arm64" or "x86_64").
@@ -39,16 +40,24 @@ fn detect_macho_arch(object_bytes: &[u8]) -> Option<&'static str> {
 }
 
 /// Link an object file into a native executable using the system C compiler.
+/// Writes the TORQ runtime C source alongside the object file and compiles both.
 pub fn link(object_bytes: &[u8], output_path: &Path) -> Result<PathBuf, CodegenError> {
-    // 1. Write object bytes to a temp file
+    // 1. Write object bytes and runtime C source to temp files
     let temp_dir = std::env::temp_dir();
     let obj_path = temp_dir.join("torq_output.o");
+    let runtime_path = temp_dir.join("torq_runtime.c");
+
     std::fs::write(&obj_path, object_bytes)
         .map_err(|e| CodegenError::new(format!("failed to write object file: {}", e)))?;
+    std::fs::write(&runtime_path, RUNTIME_C_SOURCE)
+        .map_err(|e| CodegenError::new(format!("failed to write runtime.c: {}", e)))?;
 
-    // 2. Invoke cc to link
+    // 2. Invoke cc to compile runtime and link with object file
     let mut cmd = Command::new("cc");
-    cmd.arg(&obj_path).arg("-o").arg(output_path);
+    cmd.arg(&obj_path)
+        .arg(&runtime_path)
+        .arg("-o")
+        .arg(output_path);
 
     // On macOS, explicitly pass the architecture so the linker matches the
     // object file even when running under Rosetta (x86_64 emulation on arm64).
@@ -61,8 +70,9 @@ pub fn link(object_bytes: &[u8], output_path: &Path) -> Result<PathBuf, CodegenE
         .output()
         .map_err(|e| CodegenError::new(format!("failed to invoke linker (cc): {}", e)))?;
 
-    // 3. Clean up temp file
+    // 3. Clean up temp files
     let _ = std::fs::remove_file(&obj_path);
+    let _ = std::fs::remove_file(&runtime_path);
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
