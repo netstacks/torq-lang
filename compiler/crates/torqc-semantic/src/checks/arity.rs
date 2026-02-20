@@ -7,9 +7,14 @@ use crate::registry::BlockRegistry;
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Walk every block body in `program` and emit an error for each `BlockCall`
-/// whose argument count does not match the parameter count declared in the
+/// Walk every block body in `program` and check each `BlockCall` whose
+/// argument count does not match the parameter count declared in the
 /// corresponding block definition.
+///
+/// Too many arguments is an **error**. Too few arguments is a **warning**
+/// because TORQ's syntax allows member-access chains (e.g. `%dict.field`)
+/// to absorb trailing arguments during parsing, making static arity
+/// analysis unreliable until the parser is improved.
 ///
 /// Calls to blocks that are **not** present in `registry` are silently skipped
 /// — the `resolve_blocks` check is responsible for reporting those.
@@ -69,8 +74,20 @@ fn check_expr(expr: &Expr, reg: &BlockRegistry, diags: &mut Vec<Diagnostic>) {
             if let Some(info) = reg.get(&bc.name) {
                 let expected = info.param_count;
                 let actual = bc.args.len();
-                if actual != expected {
+                if actual > expected {
+                    // Too many args is always an error.
                     diags.push(Diagnostic::error(
+                        format!(
+                            "block ::{} expects {} argument(s), but {} provided",
+                            bc.name, expected, actual,
+                        ),
+                        bc.span.clone(),
+                    ));
+                } else if actual < expected {
+                    // Too few args may be caused by the parser absorbing
+                    // trailing arguments into member-access chains, so
+                    // report as a warning rather than an error.
+                    diags.push(Diagnostic::warning(
                         format!(
                             "block ::{} expects {} argument(s), but {} provided",
                             bc.name, expected, actual,
@@ -198,7 +215,7 @@ mod tests {
 
     #[test]
     fn too_few_args() {
-        // Block `add` expects 2 params, called with 1 arg — error.
+        // Block `add` expects 2 params, called with 1 arg — warning (not error).
         let program = Program {
             blocks: vec![
                 make_block(
@@ -218,7 +235,7 @@ mod tests {
         let diags = check(&program, &registry);
 
         assert_eq!(diags.len(), 1);
-        assert!(diags[0].is_error());
+        assert!(!diags[0].is_error(), "too-few-args should be a warning, not error");
         assert_eq!(
             diags[0].message,
             "block ::add expects 2 argument(s), but 1 provided"
@@ -281,7 +298,8 @@ mod tests {
 
     #[test]
     fn nested_block_call_in_each() {
-        // An arity mismatch inside an `each` body should still be caught.
+        // An arity mismatch (too few) inside an `each` body should still be caught
+        // as a warning.
         let program = Program {
             blocks: vec![
                 make_block(
@@ -315,7 +333,7 @@ mod tests {
         let diags = check(&program, &registry);
 
         assert_eq!(diags.len(), 1);
-        assert!(diags[0].is_error());
+        assert!(!diags[0].is_error(), "too-few-args should be a warning");
         assert_eq!(
             diags[0].message,
             "block ::process expects 1 argument(s), but 0 provided"

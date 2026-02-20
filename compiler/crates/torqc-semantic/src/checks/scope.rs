@@ -66,11 +66,17 @@ fn format_variable(sigil: &Sigil, name: &str) -> String {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Walk every block in `program` and emit an error for each variable that is
+/// Walk every block in `program` and emit a warning for each variable that is
 /// used before it has been defined in any enclosing scope.
 ///
 /// Shared (`*`) variables are treated as globally accessible and are never
 /// flagged.
+///
+/// NOTE: TORQ programs frequently rely on implicit variables provided by
+/// the runtime (e.g. `$req` from HTTP handlers, pipe-injected variables,
+/// `$errors` from `validate`, etc.).  Until full type inference is
+/// available, undefined-variable diagnostics are reported as **warnings**
+/// rather than errors so that valid programs are not rejected.
 pub fn check(program: &Program) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
@@ -215,7 +221,7 @@ fn check_variable_usage(var: &Variable, scope: &Scope, diags: &mut Vec<Diagnosti
     }
 
     if !scope.is_defined(&var.name) {
-        diags.push(Diagnostic::error(
+        diags.push(Diagnostic::warning(
             format!(
                 "variable '{}' used before definition",
                 format_variable(&var.sigil, &var.name),
@@ -332,7 +338,7 @@ mod tests {
         let diags = check(&program);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("variable '$x' used before definition"));
-        assert!(diags[0].is_error());
+        assert!(!diags[0].is_error(), "scope violations should be warnings, not errors");
     }
 
     #[test]

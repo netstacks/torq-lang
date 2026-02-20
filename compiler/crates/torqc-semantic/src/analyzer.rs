@@ -135,12 +135,12 @@ mod tests {
     // -- Test 2: multiple errors collected and sorted -------------------------
 
     #[test]
-    fn multiple_errors_collected() {
-        // Three distinct errors at lines 3, 5, and 7.
+    fn multiple_diagnostics_collected() {
+        // Three diagnostics at lines 3, 5, and 7.
         //
-        // 1. Undefined block call   (line 3)  — caught by resolve_blocks
-        // 2. Undefined variable      (line 5)  — caught by scope
-        // 3. Break outside loop      (line 7)  — caught by control_flow
+        // 1. Undefined block call   (line 3)  — ERROR   (resolve_blocks)
+        // 2. Undefined variable      (line 5)  — WARNING (scope)
+        // 3. Break outside loop      (line 7)  — ERROR   (control_flow)
         let program = Program {
             blocks: vec![make_block(
                 "main",
@@ -151,7 +151,7 @@ mod tests {
                         args: vec![],
                         span: span(3, 1),
                     })),
-                    // line 5: use of undefined variable
+                    // line 5: use of undefined variable (warning)
                     Statement::Expression(Expr::Variable(Variable {
                         sigil: Sigil::Scalar,
                         name: "undef".to_string(),
@@ -166,8 +166,8 @@ mod tests {
         let result = analyze(&program);
 
         assert!(result.has_errors());
-        assert_eq!(result.error_count(), 3);
-        assert_eq!(result.warning_count(), 0);
+        assert_eq!(result.error_count(), 2);
+        assert_eq!(result.warning_count(), 1);
 
         // Verify sorted by line number
         assert_eq!(result.diagnostics[0].span.line, 3);
@@ -176,8 +176,11 @@ mod tests {
 
         // Verify each diagnostic is the expected kind
         assert!(result.diagnostics[0].message.contains("undefined block"));
+        assert!(result.diagnostics[0].is_error());
         assert!(result.diagnostics[1].message.contains("variable"));
+        assert!(!result.diagnostics[1].is_error()); // scope is now a warning
         assert!(result.diagnostics[2].message.contains("break"));
+        assert!(result.diagnostics[2].is_error());
     }
 
     // -- Test 3: errors and warnings together ---------------------------------
