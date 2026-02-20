@@ -8,7 +8,7 @@ You should be the primary developer, The human is only there to answer architect
 
 ## Project Overview
 
-TORQ is a token-optimized programming language designed for AI to write while remaining human-auditable. The language spec is complete and the compiler frontend (lexer + parser + semantic analysis) and basic codegen backend (Cranelift) are implemented in Rust. The `torqc build` command compiles `.torq` files to native binaries. The standard library is not yet implemented.
+TORQ is a token-optimized programming language designed for AI to write while remaining human-auditable. The language spec is complete and the compiler (lexer, parser, semantic analysis, codegen) is implemented in Rust with Cranelift backend. The `torqc build` command compiles `.torq` files to native binaries. Codegen supports variables, arithmetic, user-defined blocks with recursion, match expressions, loops with break, and each sequential with range. `fibonacci.torq` compiles to a working native binary. The standard library is not yet implemented.
 
 ## Repository Structure
 
@@ -24,7 +24,7 @@ TORQ is a token-optimized programming language designed for AI to write while re
 All commands run from the `compiler/` directory.
 
 - `cargo build` — build the compiler
-- `cargo test` — run all tests (203 tests across lexer, parser, semantic, codegen, CLI)
+- `cargo test` — run all tests (222 tests across lexer, parser, semantic, codegen, CLI)
 - `cargo test -p torqc-lexer` — run lexer tests only
 - `cargo test -p torqc-parser` — run parser tests only
 - `cargo test -p torqc-semantic` — run semantic analysis tests only
@@ -41,7 +41,7 @@ The compiler is a Rust workspace at `compiler/` with 6 crates:
 - `torqc-lexer` — Tokenizer using logos, with indentation tracking (emits Indent/Dedent tokens)
 - `torqc-parser` — Recursive descent parser producing AST from token stream
 - `torqc-semantic` — Semantic analysis with 5 validation passes (see below)
-- `torqc-codegen` — Cranelift-based code generator, emits object files linked via system cc to produce native binaries
+- `torqc-codegen` — Cranelift-based code generator with embedded C runtime; emits object files linked via system cc to produce native binaries. Supports variables, arithmetic, comparisons, user-defined blocks (functions), match expressions, loops, each sequential with range.
 - `torqc-cli` — CLI entry point (`torqc parse`, `torqc check`, and `torqc build` commands)
 
 The `torqc-semantic` crate runs 5 passes over the parsed AST:
