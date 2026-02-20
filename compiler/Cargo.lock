@@ -614,6 +614,7 @@ dependencies = [
  "clap",
  "serde_json",
  "torqc-ast",
+ "torqc-codegen",
  "torqc-lexer",
  "torqc-parser",
  "torqc-semantic",
