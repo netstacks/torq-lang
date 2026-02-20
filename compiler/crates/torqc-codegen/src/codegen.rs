@@ -3,13 +3,14 @@ use std::fmt;
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::{self, I64};
+use cranelift_codegen::ir::instructions::BlockArg;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, Value};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable as CraneliftVar};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use torqc_ast::ast::{BinOpKind, Block, Expr, Literal, Program, Statement};
+use torqc_ast::ast::{BinOpKind, Block, Expr, Literal, Pattern, Program, Statement};
 
 // ---------------------------------------------------------------------------
 // CodegenError
@@ -71,6 +72,8 @@ pub struct Compiler {
     variables: HashMap<String, (CraneliftVar, TorqType)>,
     /// Map from block name -> (FuncId, param_count) for user-defined blocks.
     block_funcs: HashMap<String, (FuncId, usize)>,
+    /// Stack of loop exit blocks for resolving `break` statements.
+    loop_exit_stack: Vec<cranelift_codegen::ir::Block>,
 }
 
 impl Compiler {
@@ -103,6 +106,7 @@ impl Compiler {
             str_counter: 0,
             variables: HashMap::new(),
             block_funcs: HashMap::new(),
+            loop_exit_stack: Vec::new(),
         })
     }
 
@@ -277,20 +281,22 @@ impl Compiler {
             }
         }
 
-        // Emit return
-        if is_main {
-            // ::main always returns i32 0
-            let zero = builder.ins().iconst(types::I32, 0);
-            builder.ins().return_(&[zero]);
-        } else {
-            // Non-main blocks return the last expression value as i64
-            let ret_val = if let Some((val, _ty)) = last_result {
-                val
+        // Emit return (only if current block is not already terminated)
+        if !block_is_terminated(&builder) {
+            if is_main {
+                // ::main always returns i32 0
+                let zero = builder.ins().iconst(types::I32, 0);
+                builder.ins().return_(&[zero]);
             } else {
-                // No expression result — return 0
-                builder.ins().iconst(I64, 0)
-            };
-            builder.ins().return_(&[ret_val]);
+                // Non-main blocks return the last expression value as i64
+                let ret_val = if let Some((val, _ty)) = last_result {
+                    val
+                } else {
+                    // No expression result — return 0
+                    builder.ins().iconst(I64, 0)
+                };
+                builder.ins().return_(&[ret_val]);
+            }
         }
 
         builder.finalize();
@@ -346,6 +352,37 @@ impl Compiler {
                     self.variables.insert(assign.target.name.clone(), (cl_var, ty));
                 }
 
+                Ok(None)
+            }
+            Statement::Loop(loop_stmt) => {
+                let loop_header = builder.create_block();
+                let exit_block = builder.create_block();
+
+                self.loop_exit_stack.push(exit_block);
+
+                // Jump to loop header
+                builder.ins().jump(loop_header, &[]);
+                builder.switch_to_block(loop_header);
+                // Don't seal loop_header yet — it has a back-edge from the end of the body
+
+                // Compile body
+                for stmt in &loop_stmt.body {
+                    self.compile_statement(stmt, rt, builder)?;
+                }
+
+                // Back-edge if not already terminated (e.g., by break in all paths)
+                if !block_is_terminated(builder) {
+                    builder.ins().jump(loop_header, &[]);
+                }
+
+                // Now seal the loop header (all predecessors known: entry + back-edge)
+                builder.seal_block(loop_header);
+
+                // Switch to exit block
+                builder.switch_to_block(exit_block);
+                builder.seal_block(exit_block);
+
+                self.loop_exit_stack.pop();
                 Ok(None)
             }
             Statement::Expression(expr) => {
@@ -406,7 +443,7 @@ impl Compiler {
         expr: &Expr,
         rt: &RuntimeFuncs,
         builder: &mut FunctionBuilder,
-        _pipe_value: Option<(Value, TorqType)>,
+        pipe_value: Option<(Value, TorqType)>,
     ) -> Result<(Value, TorqType), CodegenError> {
         match expr {
             Expr::Literal(Literal::Int(n, _)) => {
@@ -444,8 +481,8 @@ impl Compiler {
                 }
             }
             Expr::BinOp(binop) => {
-                let (left, _left_ty) = self.compile_expr(&binop.left, rt, builder, _pipe_value)?;
-                let (right, _right_ty) = self.compile_expr(&binop.right, rt, builder, _pipe_value)?;
+                let (left, _left_ty) = self.compile_expr(&binop.left, rt, builder, pipe_value)?;
+                let (right, _right_ty) = self.compile_expr(&binop.right, rt, builder, pipe_value)?;
 
                 let result = match binop.op {
                     BinOpKind::Add => builder.ins().iadd(left, right),
@@ -486,10 +523,15 @@ impl Compiler {
                     }
                 };
 
-                Ok((result, TorqType::I64))
+                let result_ty = match binop.op {
+                    BinOpKind::Gt | BinOpKind::Lt | BinOpKind::GtEq
+                    | BinOpKind::LtEq | BinOpKind::Eq | BinOpKind::NotEq => TorqType::Bool,
+                    _ => TorqType::I64,
+                };
+                Ok((result, result_ty))
             }
             Expr::Group(inner, _span) => {
-                self.compile_expr(inner, rt, builder, _pipe_value)
+                self.compile_expr(inner, rt, builder, pipe_value)
             }
             Expr::Call(call) if call.name == "print" => {
                 // print called as expression (e.g. inside a pipeline)
@@ -513,7 +555,7 @@ impl Compiler {
                 // Compile each argument expression
                 let mut args = Vec::new();
                 for arg_expr in &call.args {
-                    let (val, _ty) = self.compile_expr(arg_expr, rt, builder, _pipe_value)?;
+                    let (val, _ty) = self.compile_expr(arg_expr, rt, builder, pipe_value)?;
                     args.push(val);
                 }
 
@@ -522,6 +564,63 @@ impl Compiler {
                 let result = builder.inst_results(inst)[0];
 
                 Ok((result, TorqType::I64))
+            }
+            Expr::Match(m) => {
+                // Subject comes from pipe_value
+                let (subject, _) = pipe_value
+                    .ok_or_else(|| CodegenError::new("match requires pipe input"))?;
+
+                // Create merge block with a block parameter for the result
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, types::I64);
+
+                for arm in &m.arms {
+                    match &arm.pattern {
+                        Pattern::Literal(Literal::Int(n, _)) => {
+                            let arm_block = builder.create_block();
+                            let next_block = builder.create_block();
+
+                            let pat_val = builder.ins().iconst(types::I64, *n);
+                            let cmp = builder.ins().icmp(IntCC::Equal, subject, pat_val);
+                            builder.ins().brif(cmp, arm_block, &[], next_block, &[]);
+
+                            // Arm body
+                            builder.switch_to_block(arm_block);
+                            builder.seal_block(arm_block);
+                            let (result, _) = self.compile_expr(&arm.body, rt, builder, None)?;
+                            builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
+
+                            // Next test
+                            builder.switch_to_block(next_block);
+                            builder.seal_block(next_block);
+                        }
+                        Pattern::Wildcard => {
+                            let (result, _) = self.compile_expr(&arm.body, rt, builder, None)?;
+                            builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
+                        }
+                        _ => {
+                            return Err(CodegenError::new("unsupported match pattern in Phase 4"));
+                        }
+                    }
+                }
+
+                // Switch to merge block
+                builder.switch_to_block(merge_block);
+                builder.seal_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
+                Ok((result, TorqType::I64))
+            }
+            Expr::Break(_) => {
+                let exit_block = self.loop_exit_stack.last()
+                    .ok_or_else(|| CodegenError::new("break outside of loop"))?;
+                builder.ins().jump(*exit_block, &[]);
+
+                // Create unreachable block for subsequent instructions in the same arm
+                let dead_block = builder.create_block();
+                builder.switch_to_block(dead_block);
+                builder.seal_block(dead_block);
+
+                Ok((builder.ins().iconst(types::I64, 0), TorqType::Void))
             }
             _ => Err(CodegenError::new(format!(
                 "unsupported expression: {:?}",
@@ -565,6 +664,19 @@ impl Compiler {
         }
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: check if current block is terminated (has a branch/return)
+// ---------------------------------------------------------------------------
+
+fn block_is_terminated(builder: &FunctionBuilder) -> bool {
+    if let Some(block) = builder.current_block() {
+        if let Some(last_inst) = builder.func.layout.last_inst(block) {
+            return builder.func.dfg.insts[last_inst].opcode().is_terminator();
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------

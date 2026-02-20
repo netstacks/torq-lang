@@ -1340,6 +1340,13 @@ impl Parser {
             }
         }
 
+        // Break (as expression, e.g. in match arm body)
+        if self.check_token(Token::Break) {
+            let span = self.current_span();
+            self.advance();
+            return Ok(Expr::Break(span));
+        }
+
         Err(self.error(format!(
             "unexpected token in expression: {:?} (text: {:?})",
             self.current_lex_token(),

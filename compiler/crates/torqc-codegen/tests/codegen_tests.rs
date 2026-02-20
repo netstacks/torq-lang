@@ -211,3 +211,76 @@ fn block_with_multiple_params() {
     let output = compile_and_run(src);
     assert_eq!(output.trim(), "42");
 }
+
+// ---------------------------------------------------------------------------
+// Match expression tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn match_literal() {
+    let src = "\
+::classify $n
+  $n | match
+    1 -> 100
+    2 -> 200
+    _ -> 0
+
+::main
+  ::classify 2 | print
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "200");
+}
+
+#[test]
+fn match_wildcard() {
+    let src = "\
+::classify $n
+  $n | match
+    1 -> 100
+    _ -> 999
+
+::main
+  ::classify 42 | print
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "999");
+}
+
+// ---------------------------------------------------------------------------
+// Loop and break tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn loop_with_break() {
+    let src = "\
+::main
+  3 -> $i
+  loop
+    $i | print
+    ($i - 1) -> $i
+    ($i < 1) | match
+      1 -> break
+      _ -> 0
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "3\n2\n1");
+}
+
+#[test]
+fn simple_loop_with_variable() {
+    let src = "\
+::main
+  0 -> $sum
+  1 -> $i
+  loop
+    ($sum + $i) -> $sum
+    ($i + 1) -> $i
+    ($i > 5) | match
+      1 -> break
+      _ -> 0
+  $sum | print
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "15");
+}
