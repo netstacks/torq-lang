@@ -1,0 +1,6 @@
+torq_modules/
+*.o
+*.bin
+.torq-cache/
+.DS_Store
+.env

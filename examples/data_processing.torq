@@ -1,0 +1,18 @@
+## Data processing pipeline — CSV to filtered JSON output
+
+::clean $record
+  %record | omit @["_id" "internal_ref"]
+  | set "name" (%record.name | trim | upper_first)
+  | set "email" (%record.email | trim | lower)
+
+::main
+  sys.fs.read "customers.csv"
+  | as data
+  | filter .active
+  | filter .age >= 18
+  | sort by .name
+  | each %record
+    ::clean %record
+  | to json
+  | sys.fs.write "output.json"
+  | log "processed $count records"

@@ -1,0 +1,11 @@
+## Fibonacci — demonstrating recursion and computation
+
+::fibonacci $n
+  $n | match
+    0 -> 0
+    1 -> 1
+    _ -> ::fibonacci ($n - 1) + ::fibonacci ($n - 2)
+
+::main
+  range 1 20 | each $n sequential
+    ::fibonacci $n | print

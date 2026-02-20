@@ -1,0 +1,31 @@
+## CLI tool with subcommands
+
+::build $target
+  log "building $target"
+  sys.exec "make $target"
+  | fail -> log.err "build failed" | sys.exit 1
+  | log "build complete"
+
+::test
+  log "running tests"
+  sys.exec "make test"
+  | fail -> log.err "tests failed" | sys.exit 1
+  | log "all tests passed"
+
+::deploy $env
+  log "deploying to $env"
+  sys.exec "make deploy ENV=$env"
+  | retry 3 delay 5s
+  | fail -> log.err "deploy failed after retries" | sys.exit 1
+  | log "deployed to $env"
+
+::version
+  print "myapp v1.0.0"
+
+::main
+  sys.args | match
+    "build" $target -> ::build $target
+    "test" -> ::test
+    "deploy" $env -> ::deploy $env
+    "version" -> ::version
+    _ -> print "usage: myapp [build|test|deploy|version]"

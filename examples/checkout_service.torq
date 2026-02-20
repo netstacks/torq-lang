@@ -1,0 +1,47 @@
+## E-commerce checkout — full service with retry, fallback, notifications
+
+::validate_cart
+  $req.body | as data | validate %{
+    items array required
+    user_id string required
+    payment_method string required
+  }
+  | fail -> respond 400 $errors
+
+::calculate_total @items $region
+  @items | map .price | sum -> $subtotal
+  api.tax.calculate $subtotal $region -> $tax
+  $subtotal + $tax
+
+::process_payment $amount $user
+  api.stripe.charge $amount $user.payment_method
+  | retry 3 delay 1s backoff exponential
+  | fail -> !{code 402 msg "payment failed"}
+
+::send_receipt $user $order
+  api.sendgrid.send $user.email template="receipt" %{
+    order_id $order.id
+    total $order.total
+    items $order.items
+  }
+  | fail -> log.warn "receipt email failed for $user.id"
+
+::checkout
+  ::validate_cart -> %cart
+  db.query "select * from users where id=$cart.user_id" -> %user
+  ::calculate_total %cart.items %user.region -> $total
+  ::process_payment $total %user -> %charge
+  %order = %{
+    user_id %user.id
+    items %cart.items
+    total $total
+    charge_id %charge.id
+    status "complete"
+  }
+  db.insert "orders" %order
+  ::send_receipt %user %order
+  respond 200 %{order_id %order.id status "complete"}
+
+::main
+  http.listen 8080
+  | route post "/checkout" -> ::checkout

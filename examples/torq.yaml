@@ -1,0 +1,30 @@
+name: checkout-service
+version: 1.0.0
+
+services:
+  stripe:
+    spec: https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json
+    type: openapi
+    auth: ${STRIPE_KEY}
+
+  sendgrid:
+    spec: https://api.sendgrid.com/v3/openapi.json
+    type: openapi
+    auth: ${SENDGRID_KEY}
+
+  tax:
+    spec: https://api.taxjar.com/v2/openapi.json
+    type: openapi
+    auth: ${TAX_API_KEY}
+
+database:
+  url: ${DATABASE_URL}
+  pool: 10
+
+environment:
+  production:
+    log_level: error
+    port: 8080
+  development:
+    log_level: debug
+    port: 3000

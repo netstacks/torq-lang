@@ -1,0 +1,38 @@
+## Simple REST API with TORQ
+
+::health
+  respond 200 %{status "ok" uptime time.now}
+
+::get_users
+  db.query "select * from users"
+  | respond 200 json
+
+::get_user
+  $id = $req.param "id"
+  db.query "select * from users where id=$id"
+  | fail -> respond 404 %{error "user $id not found"}
+  | respond 200 json
+
+::create_user
+  $req.body | as data | validate %{
+    name string required
+    email string required match "@"
+    age int >= 0
+  }
+  | fail -> respond 400 $errors
+  | db.insert "users"
+  | respond 201 json
+
+::delete_user
+  $id = $req.param "id"
+  db.delete "users" where %{id $id}
+  | fail -> respond 404 %{error "user $id not found"}
+  | respond 200 %{deleted $id}
+
+::main
+  http.listen 8080
+  | route get "/health" -> ::health
+  | route get "/users" -> ::get_users
+  | route get "/users/:id" -> ::get_user
+  | route post "/users" -> ::create_user
+  | route delete "/users/:id" -> ::delete_user

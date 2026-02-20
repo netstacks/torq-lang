@@ -1,0 +1,4 @@
+## Hello World — the simplest TORQ program
+
+::main
+  print "hello world"
