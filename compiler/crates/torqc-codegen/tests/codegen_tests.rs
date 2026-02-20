@@ -111,6 +111,18 @@ fn hello_torq_example_file() {
 }
 
 #[test]
+fn pipeline_to_print() {
+    let output = compile_and_run("::main\n  \"hello pipeline\" | print\n");
+    assert_eq!(output.trim(), "hello pipeline");
+}
+
+#[test]
+fn pipeline_integer_to_print() {
+    let output = compile_and_run("::main\n  99 | print\n");
+    assert_eq!(output.trim(), "99");
+}
+
+#[test]
 fn empty_main_exits_zero() {
     let tokens = Lexer::tokenize("::main\n  print \"\"\n", "test.torq").expect("lex");
     let program = parser::parse(tokens, "test.torq").expect("parse");
