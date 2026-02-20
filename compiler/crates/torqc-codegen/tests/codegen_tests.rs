@@ -193,3 +193,21 @@ fn empty_main_exits_zero() {
     let _ = std::fs::remove_file(&temp);
     assert!(output.status.success());
 }
+
+// ---------------------------------------------------------------------------
+// User-defined block (function) tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn user_block_call() {
+    let src = "::double $n\n  ($n * 2)\n\n::main\n  ::double 21 | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "42");
+}
+
+#[test]
+fn block_with_multiple_params() {
+    let src = "::add $a $b\n  ($a + $b)\n\n::main\n  ::add 19 23 | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "42");
+}

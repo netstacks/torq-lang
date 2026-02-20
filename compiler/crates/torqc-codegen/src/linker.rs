@@ -42,10 +42,11 @@ fn detect_macho_arch(object_bytes: &[u8]) -> Option<&'static str> {
 /// Link an object file into a native executable using the system C compiler.
 /// Writes the TORQ runtime C source alongside the object file and compiles both.
 pub fn link(object_bytes: &[u8], output_path: &Path) -> Result<PathBuf, CodegenError> {
-    // 1. Write object bytes and runtime C source to temp files
+    // 1. Write object bytes and runtime C source to unique temp files
     let temp_dir = std::env::temp_dir();
-    let obj_path = temp_dir.join("torq_output.o");
-    let runtime_path = temp_dir.join("torq_runtime.c");
+    let pid = std::process::id();
+    let obj_path = temp_dir.join(format!("torq_output_{}.o", pid));
+    let runtime_path = temp_dir.join(format!("torq_runtime_{}.c", pid));
 
     std::fs::write(&obj_path, object_bytes)
         .map_err(|e| CodegenError::new(format!("failed to write object file: {}", e)))?;
@@ -68,9 +69,13 @@ pub fn link(object_bytes: &[u8], output_path: &Path) -> Result<PathBuf, CodegenE
 
     let output = cmd
         .output()
-        .map_err(|e| CodegenError::new(format!("failed to invoke linker (cc): {}", e)))?;
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&obj_path);
+            let _ = std::fs::remove_file(&runtime_path);
+            CodegenError::new(format!("failed to invoke linker (cc): {}", e))
+        })?;
 
-    // 3. Clean up temp files
+    // 3. Clean up temp files (always, regardless of link success/failure)
     let _ = std::fs::remove_file(&obj_path);
     let _ = std::fs::remove_file(&runtime_path);
 

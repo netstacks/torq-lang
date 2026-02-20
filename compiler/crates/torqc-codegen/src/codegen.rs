@@ -9,7 +9,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable as Cr
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use torqc_ast::ast::{BinOpKind, Expr, Literal, Program, Statement};
+use torqc_ast::ast::{BinOpKind, Block, Expr, Literal, Program, Statement};
 
 // ---------------------------------------------------------------------------
 // CodegenError
@@ -69,6 +69,8 @@ pub struct Compiler {
     module: ObjectModule,
     str_counter: usize,
     variables: HashMap<String, (CraneliftVar, TorqType)>,
+    /// Map from block name -> (FuncId, param_count) for user-defined blocks.
+    block_funcs: HashMap<String, (FuncId, usize)>,
 }
 
 impl Compiler {
@@ -100,6 +102,7 @@ impl Compiler {
             module,
             str_counter: 0,
             variables: HashMap::new(),
+            block_funcs: HashMap::new(),
         })
     }
 
@@ -157,61 +160,149 @@ impl Compiler {
 
     /// Compile a TORQ program into object code bytes.
     pub fn compile(mut self, program: &Program) -> Result<Vec<u8>, CodegenError> {
-        // 1. Find ::main block
-        let main_block = program
-            .blocks
-            .iter()
-            .find(|b| b.name == "main")
-            .ok_or_else(|| CodegenError::new("no ::main block found"))?;
-
-        // 2. Declare runtime functions
-        let rt = self.declare_runtime_funcs()?;
-
-        // 3. Declare main function: fn() -> i32
-        let mut main_sig = self.module.make_signature();
-        main_sig.returns.push(AbiParam::new(types::I32));
-
-        let main_id = self
-            .module
-            .declare_function("main", Linkage::Export, &main_sig)
-            .map_err(|e| CodegenError::new(format!("failed to declare main: {}", e)))?;
-
-        let mut ctx = self.module.make_context();
-        ctx.func.signature = main_sig;
-
-        let mut func_ctx = FunctionBuilderContext::new();
-        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
-
-        let entry = builder.create_block();
-        builder.switch_to_block(entry);
-        builder.seal_block(entry);
-
-        // 4. Reset per-function variable scope
-        self.variables.clear();
-
-        // 5. Walk ::main block body and generate code
-        // Clone the body so we don't hold a borrow on self through main_block
-        let body = main_block.body.clone();
-        for stmt in &body {
-            self.compile_statement(stmt, &rt, &mut builder)?;
+        // Verify that a ::main block exists
+        if !program.blocks.iter().any(|b| b.name == "main") {
+            return Err(CodegenError::new("no ::main block found"));
         }
 
-        // 6. Return 0 from main
-        let zero = builder.ins().iconst(types::I32, 0);
-        builder.ins().return_(&[zero]);
-        builder.finalize();
+        // 1. Declare runtime functions (once, shared across all blocks)
+        let rt = self.declare_runtime_funcs()?;
 
-        // 7. Define and finalize
-        self.module
-            .define_function(main_id, &mut ctx)
-            .map_err(|e| CodegenError::new(format!("failed to define main: {}", e)))?;
-        self.module.clear_context(&mut ctx);
+        // ---------------------------------------------------------------
+        // PASS 1 — Declare all functions
+        // ---------------------------------------------------------------
+        for block in &program.blocks {
+            if block.name == "main" {
+                // ::main → fn() -> i32, exported
+                let mut sig = self.module.make_signature();
+                sig.returns.push(AbiParam::new(types::I32));
+                let func_id = self
+                    .module
+                    .declare_function("main", Linkage::Export, &sig)
+                    .map_err(|e| CodegenError::new(format!("failed to declare main: {}", e)))?;
+                self.block_funcs.insert("main".to_string(), (func_id, 0));
+            } else {
+                // Other blocks → fn(i64, i64, ...) -> i64, local
+                let mut sig = self.module.make_signature();
+                for _ in &block.params {
+                    sig.params.push(AbiParam::new(I64));
+                }
+                sig.returns.push(AbiParam::new(I64));
+
+                let func_name = format!("torq_block_{}", block.name);
+                let func_id = self
+                    .module
+                    .declare_function(&func_name, Linkage::Local, &sig)
+                    .map_err(|e| {
+                        CodegenError::new(format!(
+                            "failed to declare block '{}': {}",
+                            block.name, e
+                        ))
+                    })?;
+                self.block_funcs
+                    .insert(block.name.clone(), (func_id, block.params.len()));
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // PASS 2 — Define all functions
+        // ---------------------------------------------------------------
+        // Clone blocks so we don't hold a borrow on program while mutating self
+        let blocks: Vec<Block> = program.blocks.clone();
+
+        for block in &blocks {
+            self.compile_block(block, &rt)?;
+        }
 
         let product = self.module.finish();
         let bytes = product
             .emit()
             .map_err(|e| CodegenError::new(format!("failed to emit object: {}", e)))?;
         Ok(bytes)
+    }
+
+    /// Compile a single block into its corresponding Cranelift function.
+    fn compile_block(&mut self, block: &Block, rt: &RuntimeFuncs) -> Result<(), CodegenError> {
+        let is_main = block.name == "main";
+        let (func_id, _param_count) = *self
+            .block_funcs
+            .get(&block.name)
+            .ok_or_else(|| CodegenError::new(format!("block '{}' not declared", block.name)))?;
+
+        // Build the function signature (must match what was declared in pass 1)
+        let sig = if is_main {
+            let mut sig = self.module.make_signature();
+            sig.returns.push(AbiParam::new(types::I32));
+            sig
+        } else {
+            let mut sig = self.module.make_signature();
+            for _ in &block.params {
+                sig.params.push(AbiParam::new(I64));
+            }
+            sig.returns.push(AbiParam::new(I64));
+            sig
+        };
+
+        let mut ctx = self.module.make_context();
+        ctx.func.signature = sig;
+
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        // Clear per-function variable scope
+        self.variables.clear();
+
+        // For non-main blocks: bind block parameters to Cranelift variables
+        if !is_main {
+            let block_params: Vec<Value> = builder.block_params(entry).to_vec();
+            for (i, param) in block.params.iter().enumerate() {
+                let cl_var = builder.declare_var(I64);
+                builder.def_var(cl_var, block_params[i]);
+                self.variables
+                    .insert(param.name.clone(), (cl_var, TorqType::I64));
+            }
+        }
+
+        // Compile the body statements, tracking the last expression result
+        let mut last_result: Option<(Value, TorqType)> = None;
+        for stmt in &block.body {
+            let result = self.compile_statement(stmt, rt, &mut builder)?;
+            if result.is_some() {
+                last_result = result;
+            }
+        }
+
+        // Emit return
+        if is_main {
+            // ::main always returns i32 0
+            let zero = builder.ins().iconst(types::I32, 0);
+            builder.ins().return_(&[zero]);
+        } else {
+            // Non-main blocks return the last expression value as i64
+            let ret_val = if let Some((val, _ty)) = last_result {
+                val
+            } else {
+                // No expression result — return 0
+                builder.ins().iconst(I64, 0)
+            };
+            builder.ins().return_(&[ret_val]);
+        }
+
+        builder.finalize();
+
+        self.module
+            .define_function(func_id, &mut ctx)
+            .map_err(|e| {
+                CodegenError::new(format!("failed to define block '{}': {}", block.name, e))
+            })?;
+        self.module.clear_context(&mut ctx);
+
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -234,8 +325,8 @@ impl Compiler {
                 Ok(None)
             }
             Statement::Pipeline(pipeline) => {
-                self.compile_pipeline(&pipeline.stages, rt, builder)?;
-                Ok(None)
+                let result = self.compile_pipeline(&pipeline.stages, rt, builder)?;
+                Ok(result)
             }
             Statement::Assignment(assign) => {
                 // Compile the RHS expression
@@ -408,6 +499,29 @@ impl Compiler {
                 }
                 let zero = builder.ins().iconst(I64, 0);
                 Ok((zero, TorqType::Void))
+            }
+            Expr::BlockCall(call) => {
+                // Look up the callee in the block_funcs map
+                let (func_id, _expected_params) =
+                    *self.block_funcs.get(&call.name).ok_or_else(|| {
+                        CodegenError::new(format!("undefined block: ::{}", call.name))
+                    })?;
+
+                // Get a function reference usable inside the current function
+                let func_ref = self.module.declare_func_in_func(func_id, builder.func);
+
+                // Compile each argument expression
+                let mut args = Vec::new();
+                for arg_expr in &call.args {
+                    let (val, _ty) = self.compile_expr(arg_expr, rt, builder, _pipe_value)?;
+                    args.push(val);
+                }
+
+                // Emit the call instruction
+                let inst = builder.ins().call(func_ref, &args);
+                let result = builder.inst_results(inst)[0];
+
+                Ok((result, TorqType::I64))
             }
             _ => Err(CodegenError::new(format!(
                 "unsupported expression: {:?}",
