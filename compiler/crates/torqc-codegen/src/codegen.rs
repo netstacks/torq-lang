@@ -1,9 +1,10 @@
 use std::fmt;
 
-use cranelift_codegen::ir::{types, AbiParam, InstBuilder};
+use cranelift_codegen::ir::types::{self, I64};
+use cranelift_codegen::ir::{AbiParam, InstBuilder, Value};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_module::{DataDescription, Linkage, Module};
+use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use torqc_ast::ast::{Expr, Literal, Program, Statement};
@@ -34,11 +35,37 @@ impl fmt::Display for CodegenError {
 impl std::error::Error for CodegenError {}
 
 // ---------------------------------------------------------------------------
+// TorqType — tracks the type of a compiled value
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TorqType {
+    I64,
+    Ptr,
+    Bool,
+    F64,
+    Void,
+}
+
+// ---------------------------------------------------------------------------
+// Runtime function IDs
+// ---------------------------------------------------------------------------
+
+struct RuntimeFuncs {
+    print_int: FuncId,
+    print_str: FuncId,
+    print_bool: FuncId,
+    print_float: FuncId,
+    print_null: FuncId,
+}
+
+// ---------------------------------------------------------------------------
 // Compiler
 // ---------------------------------------------------------------------------
 
 pub struct Compiler {
     module: ObjectModule,
+    str_counter: usize,
 }
 
 impl Compiler {
@@ -66,7 +93,62 @@ impl Compiler {
             .map_err(|e| CodegenError::new(format!("failed to create ObjectBuilder: {}", e)))?;
         let module = ObjectModule::new(obj_builder);
 
-        Ok(Self { module })
+        Ok(Self {
+            module,
+            str_counter: 0,
+        })
+    }
+
+    /// Declare all TORQ runtime functions and return their FuncIds.
+    fn declare_runtime_funcs(&mut self) -> Result<RuntimeFuncs, CodegenError> {
+        let pointer_type = self.module.target_config().pointer_type();
+
+        // torq_print_int(int64_t) -> void
+        let mut sig_int = self.module.make_signature();
+        sig_int.params.push(AbiParam::new(I64));
+        let print_int = self
+            .module
+            .declare_function("torq_print_int", Linkage::Import, &sig_int)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_int: {}", e)))?;
+
+        // torq_print_str(const char*) -> void
+        let mut sig_str = self.module.make_signature();
+        sig_str.params.push(AbiParam::new(pointer_type));
+        let print_str = self
+            .module
+            .declare_function("torq_print_str", Linkage::Import, &sig_str)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_str: {}", e)))?;
+
+        // torq_print_bool(int64_t) -> void
+        let mut sig_bool = self.module.make_signature();
+        sig_bool.params.push(AbiParam::new(I64));
+        let print_bool = self
+            .module
+            .declare_function("torq_print_bool", Linkage::Import, &sig_bool)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_bool: {}", e)))?;
+
+        // torq_print_float(double) -> void
+        let mut sig_float = self.module.make_signature();
+        sig_float.params.push(AbiParam::new(types::F64));
+        let print_float = self
+            .module
+            .declare_function("torq_print_float", Linkage::Import, &sig_float)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_float: {}", e)))?;
+
+        // torq_print_null() -> void
+        let sig_null = self.module.make_signature();
+        let print_null = self
+            .module
+            .declare_function("torq_print_null", Linkage::Import, &sig_null)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_null: {}", e)))?;
+
+        Ok(RuntimeFuncs {
+            print_int,
+            print_str,
+            print_bool,
+            print_float,
+            print_null,
+        })
     }
 
     /// Compile a TORQ program into object code bytes.
@@ -78,17 +160,8 @@ impl Compiler {
             .find(|b| b.name == "main")
             .ok_or_else(|| CodegenError::new("no ::main block found"))?;
 
-        // 2. Declare libc puts function
-        let pointer_type = self.module.target_config().pointer_type();
-
-        let mut puts_sig = self.module.make_signature();
-        puts_sig.params.push(AbiParam::new(pointer_type));
-        puts_sig.returns.push(AbiParam::new(types::I32));
-
-        let puts_id = self
-            .module
-            .declare_function("puts", Linkage::Import, &puts_sig)
-            .map_err(|e| CodegenError::new(format!("failed to declare puts: {}", e)))?;
+        // 2. Declare runtime functions
+        let rt = self.declare_runtime_funcs()?;
 
         // 3. Declare main function: fn() -> i32
         let mut main_sig = self.module.make_signature();
@@ -110,41 +183,10 @@ impl Compiler {
         builder.seal_block(entry);
 
         // 4. Walk ::main block body and generate code
-        let mut str_counter: usize = 0;
-
-        for stmt in &main_block.body {
-            match stmt {
-                Statement::Expression(Expr::Call(call)) if call.name == "print" => {
-                    if let Some(arg) = call.args.first() {
-                        self.emit_print_literal(
-                            arg,
-                            &mut str_counter,
-                            pointer_type,
-                            puts_id,
-                            &mut builder,
-                        )?;
-                    }
-                }
-                Statement::Pipeline(pipeline) => {
-                    // If last stage is print(...), treat first stage as the argument
-                    if let Some(Expr::Call(last_call)) = pipeline.stages.last() {
-                        if last_call.name == "print" {
-                            if let Some(first_stage) = pipeline.stages.first() {
-                                self.emit_print_literal(
-                                    first_stage,
-                                    &mut str_counter,
-                                    pointer_type,
-                                    puts_id,
-                                    &mut builder,
-                                )?;
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    // Skip unsupported statements for Phase 3
-                }
-            }
+        // Clone the body so we don't hold a borrow on self through main_block
+        let body = main_block.body.clone();
+        for stmt in &body {
+            self.compile_statement(stmt, &rt, &mut builder)?;
         }
 
         // 5. Return 0 from main
@@ -165,43 +207,162 @@ impl Compiler {
         Ok(bytes)
     }
 
-    /// Emit a print call for a literal expression. Converts the literal to a
-    /// string, stores it as data, and emits a call to puts.
-    fn emit_print_literal(
+    // -----------------------------------------------------------------------
+    // Statement compilation
+    // -----------------------------------------------------------------------
+
+    fn compile_statement(
         &mut self,
-        expr: &Expr,
-        str_counter: &mut usize,
-        pointer_type: cranelift_codegen::ir::Type,
-        puts_id: cranelift_module::FuncId,
+        stmt: &Statement,
+        rt: &RuntimeFuncs,
         builder: &mut FunctionBuilder,
-    ) -> Result<(), CodegenError> {
-        let text = match expr {
-            Expr::Literal(Literal::String(s, _)) => s.clone(),
-            Expr::Literal(Literal::Int(n, _)) => n.to_string(),
-            Expr::Literal(Literal::Bool(b, _)) => {
-                if *b {
-                    "true".to_string()
-                } else {
-                    "false".to_string()
+    ) -> Result<Option<(Value, TorqType)>, CodegenError> {
+        match stmt {
+            Statement::Expression(Expr::Call(call)) if call.name == "print" => {
+                // Direct print call: `print "hello"` or `print 42`
+                if let Some(arg) = call.args.first() {
+                    let (val, ty) = self.compile_expr(arg, rt, builder, None)?;
+                    self.emit_print(val, ty, rt, builder)?;
+                }
+                Ok(None)
+            }
+            Statement::Pipeline(pipeline) => {
+                self.compile_pipeline(&pipeline.stages, rt, builder)?;
+                Ok(None)
+            }
+            Statement::Expression(expr) => {
+                // Compile the expression for its side effects
+                let result = self.compile_expr(expr, rt, builder, None)?;
+                Ok(Some(result))
+            }
+            _ => {
+                // Skip unsupported statements for now
+                Ok(None)
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Pipeline compilation
+    // -----------------------------------------------------------------------
+
+    fn compile_pipeline(
+        &mut self,
+        stages: &[Expr],
+        rt: &RuntimeFuncs,
+        builder: &mut FunctionBuilder,
+    ) -> Result<Option<(Value, TorqType)>, CodegenError> {
+        let mut pipe_val: Option<(Value, TorqType)> = None;
+
+        for stage in stages {
+            match stage {
+                Expr::Call(call) if call.name == "print" => {
+                    if call.args.is_empty() {
+                        // `| print` — print the pipe value
+                        if let Some((val, ty)) = pipe_val {
+                            self.emit_print(val, ty, rt, builder)?;
+                        }
+                    } else {
+                        // `| print <arg>` — print the explicit argument
+                        let (val, ty) = self.compile_expr(call.args.first().unwrap(), rt, builder, pipe_val)?;
+                        self.emit_print(val, ty, rt, builder)?;
+                    }
+                    pipe_val = None;
+                }
+                _ => {
+                    let result = self.compile_expr(stage, rt, builder, pipe_val)?;
+                    pipe_val = Some(result);
                 }
             }
-            Expr::Literal(Literal::Float(f, _)) => f.to_string(),
-            Expr::Literal(Literal::Null(_)) => "null".to_string(),
-            _ => return Ok(()), // Skip non-literal expressions for now
-        };
+        }
 
-        let data_id = create_string_data(&mut self.module, str_counter, &text)?;
+        Ok(pipe_val)
+    }
 
-        let gv = self
-            .module
-            .declare_data_in_func(data_id, builder.func);
-        let ptr = builder.ins().global_value(pointer_type, gv);
+    // -----------------------------------------------------------------------
+    // Expression compilation
+    // -----------------------------------------------------------------------
 
-        let puts_ref = self
-            .module
-            .declare_func_in_func(puts_id, builder.func);
-        builder.ins().call(puts_ref, &[ptr]);
+    fn compile_expr(
+        &mut self,
+        expr: &Expr,
+        rt: &RuntimeFuncs,
+        builder: &mut FunctionBuilder,
+        _pipe_value: Option<(Value, TorqType)>,
+    ) -> Result<(Value, TorqType), CodegenError> {
+        match expr {
+            Expr::Literal(Literal::Int(n, _)) => {
+                let val = builder.ins().iconst(I64, *n);
+                Ok((val, TorqType::I64))
+            }
+            Expr::Literal(Literal::String(s, _)) => {
+                let pointer_type = self.module.target_config().pointer_type();
+                let data_id = create_string_data(&mut self.module, &mut self.str_counter, s)?;
+                let gv = self.module.declare_data_in_func(data_id, builder.func);
+                let ptr = builder.ins().global_value(pointer_type, gv);
+                Ok((ptr, TorqType::Ptr))
+            }
+            Expr::Literal(Literal::Bool(b, _)) => {
+                let val = builder.ins().iconst(I64, if *b { 1 } else { 0 });
+                Ok((val, TorqType::Bool))
+            }
+            Expr::Literal(Literal::Null(_)) => {
+                let val = builder.ins().iconst(I64, 0);
+                Ok((val, TorqType::Void))
+            }
+            Expr::Literal(Literal::Float(f, _)) => {
+                let val = builder.ins().f64const(*f);
+                Ok((val, TorqType::F64))
+            }
+            Expr::Call(call) if call.name == "print" => {
+                // print called as expression (e.g. inside a pipeline)
+                if let Some(arg) = call.args.first() {
+                    let (val, ty) = self.compile_expr(arg, rt, builder, None)?;
+                    self.emit_print(val, ty, rt, builder)?;
+                }
+                let zero = builder.ins().iconst(I64, 0);
+                Ok((zero, TorqType::Void))
+            }
+            _ => Err(CodegenError::new(format!(
+                "unsupported expression: {:?}",
+                expr
+            ))),
+        }
+    }
 
+    // -----------------------------------------------------------------------
+    // emit_print — dispatch to the correct runtime print function
+    // -----------------------------------------------------------------------
+
+    fn emit_print(
+        &mut self,
+        value: Value,
+        ty: TorqType,
+        rt: &RuntimeFuncs,
+        builder: &mut FunctionBuilder,
+    ) -> Result<(), CodegenError> {
+        match ty {
+            TorqType::I64 => {
+                let func_ref = self.module.declare_func_in_func(rt.print_int, builder.func);
+                builder.ins().call(func_ref, &[value]);
+            }
+            TorqType::Ptr => {
+                let func_ref = self.module.declare_func_in_func(rt.print_str, builder.func);
+                builder.ins().call(func_ref, &[value]);
+            }
+            TorqType::Bool => {
+                let func_ref = self.module.declare_func_in_func(rt.print_bool, builder.func);
+                builder.ins().call(func_ref, &[value]);
+            }
+            TorqType::F64 => {
+                let func_ref = self.module.declare_func_in_func(rt.print_float, builder.func);
+                builder.ins().call(func_ref, &[value]);
+            }
+            TorqType::Void => {
+                let func_ref = self.module.declare_func_in_func(rt.print_null, builder.func);
+                builder.ins().call(func_ref, &[]);
+            }
+        }
         Ok(())
     }
 }
@@ -224,7 +385,7 @@ fn create_string_data(
 
     let mut desc = DataDescription::new();
     let mut bytes = value.as_bytes().to_vec();
-    bytes.push(0); // null terminate for puts
+    bytes.push(0); // null terminate
     desc.define(bytes.into_boxed_slice());
 
     module
