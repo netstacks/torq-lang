@@ -8,7 +8,7 @@ You should be the primary developer, The human is only there to answer architect
 
 ## Project Overview
 
-TORQ is a token-optimized programming language designed for AI to write while remaining human-auditable. The language spec is complete and the compiler frontend (lexer + parser) is implemented in Rust. The codegen backend (Cranelift) and standard library are not yet implemented.
+TORQ is a token-optimized programming language designed for AI to write while remaining human-auditable. The language spec is complete and the compiler frontend (lexer + parser + semantic analysis) and basic codegen backend (Cranelift) are implemented in Rust. The `torqc build` command compiles `.torq` files to native binaries. The standard library is not yet implemented.
 
 ## Repository Structure
 
@@ -24,23 +24,25 @@ TORQ is a token-optimized programming language designed for AI to write while re
 All commands run from the `compiler/` directory.
 
 - `cargo build` — build the compiler
-- `cargo test` — run all tests (186 tests across lexer, parser, semantic, CLI)
+- `cargo test` — run all tests (203 tests across lexer, parser, semantic, codegen, CLI)
 - `cargo test -p torqc-lexer` — run lexer tests only
 - `cargo test -p torqc-parser` — run parser tests only
 - `cargo test -p torqc-semantic` — run semantic analysis tests only
 - `cargo clippy` — lint
 - `cargo run -p torqc-cli -- parse <file.torq>` — parse a TORQ file and print AST as JSON
 - `cargo run -p torqc-cli -- check <file.torq>` — run semantic analysis (parse + 5 validation passes)
+- `cargo run -p torqc-cli -- build <file.torq>` — compile to native binary
 
 ## Compiler Architecture
 
-The compiler is a Rust workspace at `compiler/` with 5 crates:
+The compiler is a Rust workspace at `compiler/` with 6 crates:
 
 - `torqc-ast` — AST type definitions shared across crates
 - `torqc-lexer` — Tokenizer using logos, with indentation tracking (emits Indent/Dedent tokens)
 - `torqc-parser` — Recursive descent parser producing AST from token stream
 - `torqc-semantic` — Semantic analysis with 5 validation passes (see below)
-- `torqc-cli` — CLI entry point (`torqc parse` and `torqc check` commands)
+- `torqc-codegen` — Cranelift-based code generator, emits object files linked via system cc to produce native binaries
+- `torqc-cli` — CLI entry point (`torqc parse`, `torqc check`, and `torqc build` commands)
 
 The `torqc-semantic` crate runs 5 passes over the parsed AST:
 
