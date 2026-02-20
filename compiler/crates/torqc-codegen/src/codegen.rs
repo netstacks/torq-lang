@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::fmt;
 
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::{self, I64};
 use cranelift_codegen::ir::{AbiParam, InstBuilder, Value};
 use cranelift_codegen::settings::{self, Configurable};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable as CraneliftVar};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use torqc_ast::ast::{Expr, Literal, Program, Statement};
+use torqc_ast::ast::{BinOpKind, Expr, Literal, Program, Statement};
 
 // ---------------------------------------------------------------------------
 // CodegenError
@@ -66,6 +68,7 @@ struct RuntimeFuncs {
 pub struct Compiler {
     module: ObjectModule,
     str_counter: usize,
+    variables: HashMap<String, (CraneliftVar, TorqType)>,
 }
 
 impl Compiler {
@@ -96,6 +99,7 @@ impl Compiler {
         Ok(Self {
             module,
             str_counter: 0,
+            variables: HashMap::new(),
         })
     }
 
@@ -182,19 +186,22 @@ impl Compiler {
         builder.switch_to_block(entry);
         builder.seal_block(entry);
 
-        // 4. Walk ::main block body and generate code
+        // 4. Reset per-function variable scope
+        self.variables.clear();
+
+        // 5. Walk ::main block body and generate code
         // Clone the body so we don't hold a borrow on self through main_block
         let body = main_block.body.clone();
         for stmt in &body {
             self.compile_statement(stmt, &rt, &mut builder)?;
         }
 
-        // 5. Return 0 from main
+        // 6. Return 0 from main
         let zero = builder.ins().iconst(types::I32, 0);
         builder.ins().return_(&[zero]);
         builder.finalize();
 
-        // 6. Define and finalize
+        // 7. Define and finalize
         self.module
             .define_function(main_id, &mut ctx)
             .map_err(|e| CodegenError::new(format!("failed to define main: {}", e)))?;
@@ -228,6 +235,26 @@ impl Compiler {
             }
             Statement::Pipeline(pipeline) => {
                 self.compile_pipeline(&pipeline.stages, rt, builder)?;
+                Ok(None)
+            }
+            Statement::Assignment(assign) => {
+                // Compile the RHS expression
+                let (val, ty) = self.compile_expr(&assign.value, rt, builder, None)?;
+
+                if let Some(&(cl_var, _)) = self.variables.get(&assign.target.name) {
+                    // Variable already exists — reuse the Cranelift Variable
+                    builder.def_var(cl_var, val);
+                    // Update the type in case it changed
+                    self.variables.insert(assign.target.name.clone(), (cl_var, ty));
+                } else {
+                    // New variable — declare_var returns a fresh Variable
+                    let cl_type = torq_type_to_cranelift(ty, &self.module);
+                    let cl_var = builder.declare_var(cl_type);
+                    builder.def_var(cl_var, val);
+
+                    self.variables.insert(assign.target.name.clone(), (cl_var, ty));
+                }
+
                 Ok(None)
             }
             Statement::Expression(expr) => {
@@ -314,6 +341,65 @@ impl Compiler {
                 let val = builder.ins().f64const(*f);
                 Ok((val, TorqType::F64))
             }
+            Expr::Variable(var) => {
+                if let Some(&(cl_var, ty)) = self.variables.get(&var.name) {
+                    let val = builder.use_var(cl_var);
+                    Ok((val, ty))
+                } else {
+                    Err(CodegenError::new(format!(
+                        "undefined variable: ${}",
+                        var.name
+                    )))
+                }
+            }
+            Expr::BinOp(binop) => {
+                let (left, _left_ty) = self.compile_expr(&binop.left, rt, builder, _pipe_value)?;
+                let (right, _right_ty) = self.compile_expr(&binop.right, rt, builder, _pipe_value)?;
+
+                let result = match binop.op {
+                    BinOpKind::Add => builder.ins().iadd(left, right),
+                    BinOpKind::Sub => builder.ins().isub(left, right),
+                    BinOpKind::Mul => builder.ins().imul(left, right),
+                    BinOpKind::Div => builder.ins().sdiv(left, right),
+                    BinOpKind::Mod => builder.ins().srem(left, right),
+                    BinOpKind::Gt => {
+                        let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, left, right);
+                        builder.ins().uextend(types::I64, cmp)
+                    }
+                    BinOpKind::Lt => {
+                        let cmp = builder.ins().icmp(IntCC::SignedLessThan, left, right);
+                        builder.ins().uextend(types::I64, cmp)
+                    }
+                    BinOpKind::GtEq => {
+                        let cmp = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, left, right);
+                        builder.ins().uextend(types::I64, cmp)
+                    }
+                    BinOpKind::LtEq => {
+                        let cmp = builder.ins().icmp(IntCC::SignedLessThanOrEqual, left, right);
+                        builder.ins().uextend(types::I64, cmp)
+                    }
+                    BinOpKind::Eq => {
+                        let cmp = builder.ins().icmp(IntCC::Equal, left, right);
+                        builder.ins().uextend(types::I64, cmp)
+                    }
+                    BinOpKind::NotEq => {
+                        let cmp = builder.ins().icmp(IntCC::NotEqual, left, right);
+                        builder.ins().uextend(types::I64, cmp)
+                    }
+                    BinOpKind::And => {
+                        // Logical AND: both operands are truthy (non-zero)
+                        builder.ins().band(left, right)
+                    }
+                    BinOpKind::Pow => {
+                        return Err(CodegenError::new("pow operator not yet supported"));
+                    }
+                };
+
+                Ok((result, TorqType::I64))
+            }
+            Expr::Group(inner, _span) => {
+                self.compile_expr(inner, rt, builder, _pipe_value)
+            }
             Expr::Call(call) if call.name == "print" => {
                 // print called as expression (e.g. inside a pipeline)
                 if let Some(arg) = call.args.first() {
@@ -364,6 +450,20 @@ impl Compiler {
             }
         }
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: map TorqType to a Cranelift IR type
+// ---------------------------------------------------------------------------
+
+fn torq_type_to_cranelift(ty: TorqType, module: &ObjectModule) -> cranelift_codegen::ir::Type {
+    match ty {
+        TorqType::I64 => types::I64,
+        TorqType::Bool => types::I64,
+        TorqType::F64 => types::F64,
+        TorqType::Ptr => module.target_config().pointer_type(),
+        TorqType::Void => types::I64,
     }
 }
 

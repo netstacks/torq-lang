@@ -122,6 +122,58 @@ fn pipeline_integer_to_print() {
     assert_eq!(output.trim(), "99");
 }
 
+// ---------------------------------------------------------------------------
+// Variable tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn variable_assign_and_print() {
+    let output = compile_and_run("::main\n  42 -> $x\n  $x | print\n");
+    assert_eq!(output.trim(), "42");
+}
+
+#[test]
+fn variable_reassign() {
+    let output = compile_and_run("::main\n  10 -> $x\n  20 -> $x\n  $x | print\n");
+    assert_eq!(output.trim(), "20");
+}
+
+#[test]
+fn variable_string() {
+    let output = compile_and_run("::main\n  \"hello\" -> $msg\n  $msg | print\n");
+    assert_eq!(output.trim(), "hello");
+}
+
+// ---------------------------------------------------------------------------
+// Arithmetic tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn arithmetic_add() {
+    let output = compile_and_run("::main\n  (3 + 4) | print\n");
+    assert_eq!(output.trim(), "7");
+}
+
+#[test]
+fn arithmetic_sub() {
+    let output = compile_and_run("::main\n  (10 - 3) | print\n");
+    assert_eq!(output.trim(), "7");
+}
+
+#[test]
+fn arithmetic_mul() {
+    let output = compile_and_run("::main\n  (6 * 7) | print\n");
+    assert_eq!(output.trim(), "42");
+}
+
+#[test]
+fn arithmetic_complex() {
+    let output = compile_and_run("::main\n  ((2 + 3) * (10 - 4)) | print\n");
+    assert_eq!(output.trim(), "30");
+}
+
+// ---------------------------------------------------------------------------
+
 #[test]
 fn empty_main_exits_zero() {
     let tokens = Lexer::tokenize("::main\n  print \"\"\n", "test.torq").expect("lex");
