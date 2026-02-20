@@ -18,6 +18,11 @@ enum Commands {
         /// Path to the .torq source file
         file: String,
     },
+    /// Check a .torq file for semantic errors
+    Check {
+        /// Path to the .torq source file
+        file: String,
+    },
 }
 
 fn main() {
@@ -30,7 +35,44 @@ fn main() {
                 process::exit(1);
             }
         }
+        Commands::Check { file } => {
+            if let Err(e) = run_check(&file) {
+                eprintln!("error: {}", e);
+                process::exit(1);
+            }
+        }
     }
+}
+
+fn run_check(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read '{}': {}", path, e))?;
+
+    let tokens = Lexer::tokenize(&source, path)
+        .map_err(|e| format!("lex error: {}", e))?;
+
+    let program = parser::parse(tokens, path)
+        .map_err(|e| format!("parse error: {}", e))?;
+
+    let result = torqc_semantic::analyzer::analyze(&program);
+
+    for diag in &result.diagnostics {
+        eprintln!("{}", diag);
+    }
+
+    let errors = result.error_count();
+    let warnings = result.warning_count();
+
+    if errors > 0 {
+        eprintln!("\n\u{2717} {} error(s), {} warning(s)", errors, warnings);
+        process::exit(1);
+    } else if warnings > 0 {
+        eprintln!("\n\u{26A0} {} warning(s)", warnings);
+    } else {
+        eprintln!("\u{2713} No issues found");
+    }
+
+    Ok(())
 }
 
 fn run_parse(path: &str) -> Result<(), Box<dyn std::error::Error>> {

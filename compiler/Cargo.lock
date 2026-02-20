@@ -296,6 +296,7 @@ dependencies = [
  "torqc-ast",
  "torqc-lexer",
  "torqc-parser",
+ "torqc-semantic",
 ]
 
 [[package]]
