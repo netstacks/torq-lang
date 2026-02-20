@@ -24,20 +24,31 @@ TORQ is a token-optimized programming language designed for AI to write while re
 All commands run from the `compiler/` directory.
 
 - `cargo build` — build the compiler
-- `cargo test` — run all tests (131 tests across lexer, parser, CLI)
+- `cargo test` — run all tests (186 tests across lexer, parser, semantic, CLI)
 - `cargo test -p torqc-lexer` — run lexer tests only
 - `cargo test -p torqc-parser` — run parser tests only
+- `cargo test -p torqc-semantic` — run semantic analysis tests only
 - `cargo clippy` — lint
 - `cargo run -p torqc-cli -- parse <file.torq>` — parse a TORQ file and print AST as JSON
+- `cargo run -p torqc-cli -- check <file.torq>` — run semantic analysis (parse + 5 validation passes)
 
 ## Compiler Architecture
 
-The compiler is a Rust workspace at `compiler/` with 4 crates:
+The compiler is a Rust workspace at `compiler/` with 5 crates:
 
 - `torqc-ast` — AST type definitions shared across crates
 - `torqc-lexer` — Tokenizer using logos, with indentation tracking (emits Indent/Dedent tokens)
 - `torqc-parser` — Recursive descent parser producing AST from token stream
-- `torqc-cli` — CLI entry point (`torqc parse` command)
+- `torqc-semantic` — Semantic analysis with 5 validation passes (see below)
+- `torqc-cli` — CLI entry point (`torqc parse` and `torqc check` commands)
+
+The `torqc-semantic` crate runs 5 passes over the parsed AST:
+
+1. **Block registry** — builds a name-to-block map; detects duplicate block definitions
+2. **Block resolution** — verifies all `::block_call` and `&block_ref` targets exist; suggests "did you mean?" for close misspellings (Levenshtein distance)
+3. **Parameter arity** — checks that block calls pass the correct number of arguments
+4. **Variable scope** — tracks variable definitions (assignments, params, each bindings, match patterns) and reports use of undefined variables; `*shared` variables are always in scope
+5. **Control flow** — validates `break` only appears inside `loop` bodies; warns when `*shared` variables are assigned inside parallel `each` (suggests adding `sequential`)
 
 Token types are fieldless enums — the actual source text is stored in `SpannedToken.text`. The parser extracts variable names, string contents, and numbers from this text field.
 

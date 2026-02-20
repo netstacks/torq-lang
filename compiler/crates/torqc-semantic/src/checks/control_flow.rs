@@ -93,6 +93,7 @@ fn check_statement(
 // Expression walker
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::only_used_in_recursion)]
 fn check_expr(expr: &Expr, in_loop: bool, in_parallel_each: bool, diags: &mut Vec<Diagnostic>) {
     match expr {
         Expr::Break(span) => {
