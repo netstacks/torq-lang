@@ -1,3 +1,53 @@
+use std::process;
+
+use clap::{Parser as ClapParser, Subcommand};
+use torqc_lexer::lexer::Lexer;
+use torqc_parser::parser;
+
+#[derive(ClapParser)]
+#[command(name = "torqc", about = "TORQ language compiler")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Parse a .torq file and print the AST as JSON
+    Parse {
+        /// Path to the .torq source file
+        file: String,
+    },
+}
+
 fn main() {
-    println!("torqc - TORQ compiler");
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Parse { file } => {
+            if let Err(e) = run_parse(&file) {
+                eprintln!("error: {}", e);
+                process::exit(1);
+            }
+        }
+    }
+}
+
+fn run_parse(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read '{}': {}", path, e))?;
+
+    let tokens = Lexer::tokenize(&source, path)
+        .map_err(|e| format!("lex error: {}", e))?;
+
+    let program = parser::parse(tokens, path)
+        .map_err(|e| format!("parse error: {}", e))?;
+
+    let json = serde_json::to_string_pretty(&program)?;
+    println!("{}", json);
+
+    let block_count = program.blocks.len();
+    eprintln!("\u{2713} Parsed {} block(s)", block_count);
+
+    Ok(())
 }
