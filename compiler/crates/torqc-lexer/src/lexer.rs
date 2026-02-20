@@ -16,10 +16,11 @@ pub enum LexToken {
     Eof,
 }
 
-/// A token annotated with its source location.
+/// A token annotated with its source location and original text.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpannedToken {
     pub token: LexToken,
+    pub text: String,
     pub line: usize,
     pub col: usize,
 }
@@ -82,6 +83,7 @@ impl Lexer {
                 indent_stack.push(indent);
                 tokens.push(SpannedToken {
                     token: LexToken::Indent,
+                    text: String::new(),
                     line: line_num,
                     col: 1,
                 });
@@ -91,6 +93,7 @@ impl Lexer {
                     indent_stack.pop();
                     tokens.push(SpannedToken {
                         token: LexToken::Dedent,
+                        text: String::new(),
                         line: line_num,
                         col: 1,
                     });
@@ -122,9 +125,11 @@ impl Lexer {
 
                         let span = lexer.span();
                         let col = indent + span.start + 1;
+                        let text = content[span.start..span.end].to_string();
 
                         tokens.push(SpannedToken {
                             token: LexToken::Token(tok),
+                            text,
                             line: line_num,
                             col,
                         });
@@ -146,9 +151,9 @@ impl Lexer {
             }
 
             // Emit a Newline token at the end of each processed line.
-            // Use column = indent + content length + 1 (just past the content).
             tokens.push(SpannedToken {
                 token: LexToken::Token(Token::Newline),
+                text: "\n".to_string(),
                 line: line_num,
                 col: indent + content.len() + 1,
             });
@@ -160,6 +165,7 @@ impl Lexer {
             indent_stack.pop();
             tokens.push(SpannedToken {
                 token: LexToken::Dedent,
+                text: String::new(),
                 line: final_line,
                 col: 1,
             });
@@ -168,6 +174,7 @@ impl Lexer {
         // End with Eof token.
         tokens.push(SpannedToken {
             token: LexToken::Eof,
+            text: String::new(),
             line: final_line,
             col: 1,
         });
@@ -227,18 +234,14 @@ mod tests {
         assert_eq!(
             types,
             vec![
-                // a
                 LexToken::Token(Token::Ident),
                 LexToken::Token(Token::Newline),
-                // indent, b
                 LexToken::Indent,
                 LexToken::Token(Token::Ident),
                 LexToken::Token(Token::Newline),
-                // indent, c
                 LexToken::Indent,
                 LexToken::Token(Token::Ident),
                 LexToken::Token(Token::Newline),
-                // dedent x2, d
                 LexToken::Dedent,
                 LexToken::Dedent,
                 LexToken::Token(Token::Ident),
@@ -334,8 +337,6 @@ mod tests {
     fn column_numbers() {
         let source = "  $x";
         let tokens = tokenize(source);
-        // $x starts at position 2 in the content (0-indexed), indent is 2
-        // col = indent + span.start + 1 = 2 + 0 + 1 = 3
         assert_eq!(tokens[0].token, LexToken::Indent);
         assert_eq!(tokens[0].col, 1);
         assert_eq!(tokens[1].token, LexToken::Token(Token::ScalarVar));
@@ -347,5 +348,23 @@ mod tests {
     fn empty_source() {
         let types = token_types("");
         assert_eq!(types, vec![LexToken::Eof]);
+    }
+
+    #[test]
+    fn text_preserved_for_variables() {
+        let tokens = tokenize("$name");
+        assert_eq!(tokens[0].text, "$name");
+    }
+
+    #[test]
+    fn text_preserved_for_strings() {
+        let tokens = tokenize("\"hello world\"");
+        assert_eq!(tokens[0].text, "\"hello world\"");
+    }
+
+    #[test]
+    fn text_preserved_for_block_names() {
+        let tokens = tokenize("::main");
+        assert_eq!(tokens[0].text, "::main");
     }
 }

@@ -252,6 +252,10 @@ pub enum Token {
     #[token("&")]
     Ampersand,
 
+    /// `%` — percent / modulo (standalone, when not followed by identifier)
+    #[token("%")]
+    Percent,
+
     /// `.` — dot
     #[token(".")]
     Dot,
