@@ -8,16 +8,38 @@ You should be the primary developer, The human is only there to answer architect
 
 ## Project Overview
 
-TORQ is a token-optimized programming language designed for AI to write while remaining human-auditable. It's currently in the **specification phase** — the language grammar and spec are complete, but the compiler (`torqc`) and standard library have not been implemented yet.
-
-The `compiler/` and `stdlib/` directories are empty placeholders for future implementation.
+TORQ is a token-optimized programming language designed for AI to write while remaining human-auditable. The language spec is complete and the compiler frontend (lexer + parser) is implemented in Rust. The codegen backend (Cranelift) and standard library are not yet implemented.
 
 ## Repository Structure
 
 - `docs/TORQ-LANGUAGE-SPEC.md` — Complete language specification (~1050 lines). The authoritative reference for all syntax, semantics, and design decisions.
 - `docs/TORQ-AI-PROMPT.md` — System prompt for AI code generation (~115 lines). Condensed grammar rules ready to paste into any AI model.
+- `docs/plans/` — Design documents and implementation plans.
 - `examples/*.torq` — Seven example programs demonstrating language features (hello world through full e-commerce checkout service).
 - `examples/torq.yaml` — Configuration file example showing service definitions and environment config.
+- `compiler/` — Rust workspace for the `torqc` compiler (see Build Commands below).
+
+## Build Commands
+
+All commands run from the `compiler/` directory.
+
+- `cargo build` — build the compiler
+- `cargo test` — run all tests (131 tests across lexer, parser, CLI)
+- `cargo test -p torqc-lexer` — run lexer tests only
+- `cargo test -p torqc-parser` — run parser tests only
+- `cargo clippy` — lint
+- `cargo run -p torqc-cli -- parse <file.torq>` — parse a TORQ file and print AST as JSON
+
+## Compiler Architecture
+
+The compiler is a Rust workspace at `compiler/` with 4 crates:
+
+- `torqc-ast` — AST type definitions shared across crates
+- `torqc-lexer` — Tokenizer using logos, with indentation tracking (emits Indent/Dedent tokens)
+- `torqc-parser` — Recursive descent parser producing AST from token stream
+- `torqc-cli` — CLI entry point (`torqc parse` command)
+
+Token types are fieldless enums — the actual source text is stored in `SpannedToken.text`. The parser extracts variable names, string contents, and numbers from this text field.
 
 ## Language Essentials
 
