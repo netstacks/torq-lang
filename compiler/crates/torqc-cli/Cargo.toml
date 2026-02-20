@@ -1,0 +1,11 @@
+[package]
+name = "torqc-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+torqc-ast = { path = "../torqc-ast" }
+torqc-lexer = { path = "../torqc-lexer" }
+torqc-parser = { path = "../torqc-parser" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
