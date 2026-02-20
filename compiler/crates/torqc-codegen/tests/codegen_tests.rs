@@ -313,3 +313,79 @@ fn each_sequential_range_with_block_call() {
     let output = compile_and_run(src);
     assert_eq!(output.trim(), "2\n4\n6");
 }
+
+// ---------------------------------------------------------------------------
+// Recursion + fibonacci integration tests
+// ---------------------------------------------------------------------------
+
+fn fib_value(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    let (mut a, mut b) = (0i64, 1i64);
+    for _ in 2..=n {
+        let tmp = a + b;
+        a = b;
+        b = tmp;
+    }
+    b
+}
+
+#[test]
+fn fibonacci_example_file() {
+    let fib = examples_dir().join("fibonacci.torq");
+    let source = std::fs::read_to_string(&fib)
+        .unwrap_or_else(|e| panic!("read {} failed: {}", fib.display(), e));
+    let output = compile_and_run(&source);
+    let lines: Vec<&str> = output.trim().lines().collect();
+    let expected: Vec<String> = (1..20).map(|n| fib_value(n).to_string()).collect();
+    let expected_refs: Vec<&str> = expected.iter().map(|s| s.as_str()).collect();
+    assert_eq!(lines, expected_refs);
+}
+
+#[test]
+fn fibonacci_inline() {
+    let src = "\
+::fibonacci $n
+  $n | match
+    0 -> 0
+    1 -> 1
+    _ -> ::fibonacci ($n - 1) + ::fibonacci ($n - 2)
+
+::main
+  ::fibonacci 10 | print
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "55");
+}
+
+#[test]
+fn recursive_factorial() {
+    let src = "\
+::factorial $n
+  $n | match
+    0 -> 1
+    _ -> ($n * ::factorial ($n - 1))
+
+::main
+  ::factorial 10 | print
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "3628800");
+}
+
+#[test]
+fn block_returning_match() {
+    let src = "\
+::sign $n
+  $n | match
+    0 -> 0
+    _ -> 1
+
+::main
+  ::sign 42 | print
+  ::sign 0 | print
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "1\n0");
+}
