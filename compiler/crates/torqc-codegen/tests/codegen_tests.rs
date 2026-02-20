@@ -284,3 +284,32 @@ fn simple_loop_with_variable() {
     let output = compile_and_run(src);
     assert_eq!(output.trim(), "15");
 }
+
+// ---------------------------------------------------------------------------
+// Each sequential + range tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn each_sequential_range() {
+    let src = "\
+::main
+  range 1 5 | each $n sequential
+    $n | print
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "1\n2\n3\n4");
+}
+
+#[test]
+fn each_sequential_range_with_block_call() {
+    let src = "\
+::double $n
+  ($n * 2)
+
+::main
+  range 1 4 | each $n sequential
+    ::double $n | print
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "2\n4\n6");
+}

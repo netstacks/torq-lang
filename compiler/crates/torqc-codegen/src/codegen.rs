@@ -385,15 +385,73 @@ impl Compiler {
                 self.loop_exit_stack.pop();
                 Ok(None)
             }
+            Statement::Each(each) => {
+                if !each.sequential {
+                    return Err(CodegenError::new("parallel each not supported in Phase 4"));
+                }
+
+                // Only support range(...) as iterable for Phase 4
+                let (start_val, end_val) = match &*each.iterable {
+                    Expr::Call(call) if call.name == "range" && call.args.len() == 2 => {
+                        let (start, _) = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let (end, _) = self.compile_expr(&call.args[1], rt, builder, None)?;
+                        (start, end)
+                    }
+                    _ => return Err(CodegenError::new(
+                        "each sequential only supports range() iterable in Phase 4"
+                    )),
+                };
+
+                let loop_header = builder.create_block();
+                builder.append_block_param(loop_header, types::I64); // counter param
+                let body_block = builder.create_block();
+                let exit_block = builder.create_block();
+
+                self.loop_exit_stack.push(exit_block);
+
+                // Jump to header with start value
+                builder.ins().jump(loop_header, &[BlockArg::Value(start_val)]);
+                builder.switch_to_block(loop_header);
+
+                let counter = builder.block_params(loop_header)[0];
+
+                // Check: counter >= end → exit
+                let cmp = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, counter, end_val);
+                builder.ins().brif(cmp, exit_block, &[], body_block, &[]);
+
+                builder.switch_to_block(body_block);
+                builder.seal_block(body_block);
+
+                // Bind the iteration variable
+                let cl_var = builder.declare_var(types::I64);
+                builder.def_var(cl_var, counter);
+                self.variables.insert(each.binding.name.clone(), (cl_var, TorqType::I64));
+
+                // Compile body
+                for stmt in &each.body {
+                    self.compile_statement(stmt, rt, builder)?;
+                }
+
+                // Increment counter and loop back
+                if !block_is_terminated(builder) {
+                    let one = builder.ins().iconst(types::I64, 1);
+                    let next = builder.ins().iadd(counter, one);
+                    builder.ins().jump(loop_header, &[BlockArg::Value(next)]);
+                }
+
+                builder.seal_block(loop_header); // seal after back-edge
+                builder.switch_to_block(exit_block);
+                builder.seal_block(exit_block);
+
+                self.loop_exit_stack.pop();
+                Ok(None)
+            }
             Statement::Expression(expr) => {
                 // Compile the expression for its side effects
                 let result = self.compile_expr(expr, rt, builder, None)?;
                 Ok(Some(result))
             }
-            _ => {
-                // Skip unsupported statements for now
-                Ok(None)
-            }
+            // All Statement variants are now covered; no wildcard needed.
         }
     }
 
