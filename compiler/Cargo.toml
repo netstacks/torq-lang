@@ -4,5 +4,6 @@ members = [
     "crates/torqc-ast",
     "crates/torqc-lexer",
     "crates/torqc-parser",
+    "crates/torqc-semantic",
     "crates/torqc-cli",
 ]

@@ -1,0 +1,12 @@
+[package]
+name = "torqc-semantic"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+torqc-ast = { path = "../torqc-ast" }
+
+[dev-dependencies]
+torqc-lexer = { path = "../torqc-lexer" }
+torqc-parser = { path = "../torqc-parser" }
+pretty_assertions = "1"
