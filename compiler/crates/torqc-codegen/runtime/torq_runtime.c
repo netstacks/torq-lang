@@ -153,8 +153,20 @@ static void torq_print_array_value(TorqValue* v) {
 }
 
 static void torq_print_dict_value(TorqValue* v) {
-    (void)v;
-    printf("{dict}");
+    if (!v || v->type != TV_DICT) { printf("{dict}"); return; }
+    TorqDict* d = v->dict;
+    putchar('{');
+    for (int64_t i = 0; i < d->length; i++) {
+        if (i > 0) printf(", ");
+        printf("%s: ", d->entries[i].key);
+        TorqValue* val = d->entries[i].value;
+        if (val && val->type == TV_STR) {
+            printf("\"%s\"", val->string);
+        } else {
+            torq_fprint_value(stdout, val);
+        }
+    }
+    putchar('}');
 }
 
 static void torq_fprint_value(FILE* f, TorqValue* v) {
@@ -166,7 +178,19 @@ static void torq_fprint_value(FILE* f, TorqValue* v) {
         case TV_BOOL:  fprintf(f, "%s", v->boolean ? "true" : "false"); break;
         case TV_STR:   fprintf(f, "%s", v->string); break;
         case TV_ARRAY: torq_print_array_value(v); break;
-        case TV_DICT:  fprintf(f, "{dict}"); break;
+        case TV_DICT: {
+            TorqDict* d = v->dict;
+            fprintf(f, "{");
+            for (int64_t i = 0; i < d->length; i++) {
+                if (i > 0) fprintf(f, ", ");
+                fprintf(f, "%s: ", d->entries[i].key);
+                TorqValue* val = d->entries[i].value;
+                if (val && val->type == TV_STR) fprintf(f, "\"%s\"", val->string);
+                else torq_fprint_value(f, val);
+            }
+            fprintf(f, "}");
+            break;
+        }
     }
 }
 
@@ -375,5 +399,92 @@ TorqValue* torq_array_get(TorqValue* arr, TorqValue* index) {
     int64_t i = torq_as_int(index);
     if (i < 0 || i >= arr->array->length) return torq_null();
     return arr->array->elements[i];
+}
+
+// ===== Dict =====
+
+TorqValue* torq_dict_new(void) {
+    TorqValue* v = (TorqValue*)malloc(sizeof(TorqValue));
+    v->type = TV_DICT;
+    v->dict = (TorqDict*)malloc(sizeof(TorqDict));
+    v->dict->capacity = 16;
+    v->dict->length = 0;
+    v->dict->entries = (TorqDictEntry*)calloc(16, sizeof(TorqDictEntry));
+    return v;
+}
+
+void torq_dict_set_mut(TorqValue* d, const char* key, TorqValue* val) {
+    if (!d || d->type != TV_DICT) return;
+    TorqDict* dict = d->dict;
+    for (int64_t i = 0; i < dict->length; i++) {
+        if (strcmp(dict->entries[i].key, key) == 0) {
+            dict->entries[i].value = val;
+            return;
+        }
+    }
+    if (dict->length >= dict->capacity) {
+        dict->capacity *= 2;
+        dict->entries = (TorqDictEntry*)realloc(dict->entries, dict->capacity * sizeof(TorqDictEntry));
+    }
+    dict->entries[dict->length].key = strdup(key);
+    dict->entries[dict->length].value = val;
+    dict->length++;
+}
+
+TorqValue* torq_dict_get(TorqValue* d, const char* key) {
+    if (!d || d->type != TV_DICT) return torq_null();
+    TorqDict* dict = d->dict;
+    for (int64_t i = 0; i < dict->length; i++) {
+        if (strcmp(dict->entries[i].key, key) == 0) {
+            return dict->entries[i].value;
+        }
+    }
+    return torq_null();
+}
+
+TorqValue* torq_dict_len(TorqValue* d) {
+    if (!d || d->type != TV_DICT) return torq_int(0);
+    return torq_int(d->dict->length);
+}
+
+TorqValue* torq_dict_has(TorqValue* d, const char* key) {
+    if (!d || d->type != TV_DICT) return torq_bool(0);
+    TorqDict* dict = d->dict;
+    for (int64_t i = 0; i < dict->length; i++) {
+        if (strcmp(dict->entries[i].key, key) == 0) return torq_bool(1);
+    }
+    return torq_bool(0);
+}
+
+TorqValue* torq_dict_keys(TorqValue* d) {
+    TorqValue* arr = torq_array_new();
+    if (!d || d->type != TV_DICT) return arr;
+    TorqDict* dict = d->dict;
+    for (int64_t i = 0; i < dict->length; i++) {
+        torq_array_push_mut(arr, torq_str(dict->entries[i].key));
+    }
+    return arr;
+}
+
+TorqValue* torq_dict_values(TorqValue* d) {
+    TorqValue* arr = torq_array_new();
+    if (!d || d->type != TV_DICT) return arr;
+    TorqDict* dict = d->dict;
+    for (int64_t i = 0; i < dict->length; i++) {
+        torq_array_push_mut(arr, dict->entries[i].value);
+    }
+    return arr;
+}
+
+// ===== Unified len =====
+
+TorqValue* torq_len(TorqValue* v) {
+    if (!v) return torq_int(0);
+    switch (v->type) {
+        case TV_ARRAY: return torq_int(v->array->length);
+        case TV_DICT: return torq_int(v->dict->length);
+        case TV_STR: return torq_int((int64_t)strlen(v->string));
+        default: return torq_int(0);
+    }
 }
 

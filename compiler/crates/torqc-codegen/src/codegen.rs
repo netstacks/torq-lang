@@ -41,6 +41,7 @@ impl std::error::Error for CodegenError {}
 // Runtime function IDs
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 struct RuntimeFuncs {
     // Constructors
     torq_int: FuncId,       // (i64) -> ptr
@@ -73,6 +74,12 @@ struct RuntimeFuncs {
     torq_array_first: FuncId,     // (ptr) -> ptr
     torq_array_last: FuncId,      // (ptr) -> ptr
     torq_array_get: FuncId,       // (ptr, ptr) -> ptr
+    // Dict
+    torq_dict_new: FuncId,        // () -> ptr
+    torq_dict_set_mut: FuncId,    // (ptr, ptr, ptr) -> void
+    torq_dict_get: FuncId,        // (ptr, ptr) -> ptr
+    // Unified len
+    torq_len: FuncId,             // (ptr) -> ptr
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +250,25 @@ impl Compiler {
             .declare_function("torq_array_get", Linkage::Import, &sig_pp_to_ptr)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_array_get: {}", e)))?;
 
+        // Signature: (ptr, ptr, ptr) -> void  — for torq_dict_set_mut
+        let mut sig_ppp_to_void = self.module.make_signature();
+        sig_ppp_to_void.params.push(AbiParam::new(ptr));
+        sig_ppp_to_void.params.push(AbiParam::new(ptr));
+        sig_ppp_to_void.params.push(AbiParam::new(ptr));
+
+        let torq_dict_new = self.module
+            .declare_function("torq_dict_new", Linkage::Import, &sig_void_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_new: {}", e)))?;
+        let torq_dict_set_mut = self.module
+            .declare_function("torq_dict_set_mut", Linkage::Import, &sig_ppp_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_set_mut: {}", e)))?;
+        let torq_dict_get = self.module
+            .declare_function("torq_dict_get", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_get: {}", e)))?;
+        let torq_len = self.module
+            .declare_function("torq_len", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_len: {}", e)))?;
+
         Ok(RuntimeFuncs {
             torq_int,
             torq_float,
@@ -269,6 +295,10 @@ impl Compiler {
             torq_array_first,
             torq_array_last,
             torq_array_get,
+            torq_dict_new,
+            torq_dict_set_mut,
+            torq_dict_get,
+            torq_len,
         })
     }
 
@@ -609,7 +639,7 @@ impl Compiler {
                 }
                 Expr::Call(call) if call.name == "len" && call.args.is_empty() => {
                     if let Some(val) = pipe_val {
-                        let func_ref = self.module.declare_func_in_func(rt.torq_array_len, builder.func);
+                        let func_ref = self.module.declare_func_in_func(rt.torq_len, builder.func);
                         let inst = builder.ins().call(func_ref, &[val]);
                         pipe_val = Some(builder.inst_results(inst)[0]);
                     }
@@ -857,6 +887,38 @@ impl Compiler {
                 }
 
                 Ok(arr)
+            }
+            Expr::Dict(entries, _) => {
+                let new_fn = self.module.declare_func_in_func(rt.torq_dict_new, builder.func);
+                let inst = builder.ins().call(new_fn, &[]);
+                let dict = builder.inst_results(inst)[0];
+
+                let set_fn = self.module.declare_func_in_func(rt.torq_dict_set_mut, builder.func);
+                let pointer_type = self.module.target_config().pointer_type();
+                for entry in entries {
+                    // Create string data for key
+                    let key_data = create_string_data(&mut self.module, &mut self.str_counter, &entry.key)?;
+                    let key_gv = self.module.declare_data_in_func(key_data, builder.func);
+                    let key_ptr = builder.ins().global_value(pointer_type, key_gv);
+
+                    // Compile value expression
+                    let val = self.compile_expr(&entry.value, rt, builder, None)?;
+
+                    builder.ins().call(set_fn, &[dict, key_ptr, val]);
+                }
+
+                Ok(dict)
+            }
+            Expr::MemberAccess(access) => {
+                let obj = self.compile_expr(&access.object, rt, builder, pipe_value)?;
+                let pointer_type = self.module.target_config().pointer_type();
+                let key_data = create_string_data(&mut self.module, &mut self.str_counter, &access.field)?;
+                let key_gv = self.module.declare_data_in_func(key_data, builder.func);
+                let key_ptr = builder.ins().global_value(pointer_type, key_gv);
+
+                let get_fn = self.module.declare_func_in_func(rt.torq_dict_get, builder.func);
+                let inst = builder.ins().call(get_fn, &[obj, key_ptr]);
+                Ok(builder.inst_results(inst)[0])
             }
             _ => Err(CodegenError::new(format!(
                 "unsupported expression: {:?}",

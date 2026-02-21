@@ -411,3 +411,28 @@ fn array_first_last() {
     let output = compile_and_run("::main\n  @nums = [10 20 30]\n  @nums | first | print\n  @nums | last | print\n");
     assert_eq!(output.trim(), "10\n30");
 }
+
+// ---------------------------------------------------------------------------
+// Dict tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dict_create_and_print() {
+    let src = "::main\n  %user = { name \"alice\" age 30 }\n  %user | print\n";
+    let output = compile_and_run(src);
+    assert!(output.contains("name") && output.contains("alice") && output.contains("age") && output.contains("30"));
+}
+
+#[test]
+fn dict_member_access() {
+    let src = "::main\n  %user = { name \"alice\" age 30 }\n  %user.name | print\n  %user.age | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "alice\n30");
+}
+
+#[test]
+fn dict_len() {
+    let src = "::main\n  %d = { a 1 b 2 c 3 }\n  %d | len | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "3");
+}
