@@ -553,3 +553,31 @@ fn to_json_array() {
     let src = "::main\n  @nums = [1 2 3]\n  @nums | to_json | print\n";
     assert_eq!(compile_and_run(src).trim(), "[1, 2, 3]");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 showcase – comprehensive integration test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn phase5_showcase() {
+    let src = r#"::main
+  @names = ["alice" "bob" "charlie"]
+  @names | len | print
+  @names | first | upper | print
+
+  %user = { name "alice" age 30 }
+  %user.name | print
+  %user.age | print
+
+  "hello world" | upper | print
+  "  spaces  " | trim | print
+"#;
+    let output = compile_and_run(src);
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert_eq!(lines[0], "3");
+    assert_eq!(lines[1], "ALICE");
+    assert_eq!(lines[2], "alice");
+    assert_eq!(lines[3], "30");
+    assert_eq!(lines[4], "HELLO WORLD");
+    assert_eq!(lines[5], "spaces");
+}
