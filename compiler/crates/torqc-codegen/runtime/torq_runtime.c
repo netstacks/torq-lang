@@ -772,3 +772,98 @@ void torq_exit(TorqValue* code) {
     exit((int)torq_as_int(code));
 }
 
+// ===== JSON =====
+
+// Helper: append a string to a dynamically growing buffer
+static void json_buf_append(char** buf, size_t* len, size_t* cap, const char* s) {
+    size_t slen = strlen(s);
+    while (*len + slen >= *cap) {
+        *cap *= 2;
+        *buf = (char*)realloc(*buf, *cap);
+    }
+    memcpy(*buf + *len, s, slen);
+    *len += slen;
+    (*buf)[*len] = '\0';
+}
+
+static void json_serialize(TorqValue* v, char** buf, size_t* len, size_t* cap) {
+    if (!v || v->type == TV_NULL) {
+        json_buf_append(buf, len, cap, "null");
+        return;
+    }
+    switch (v->type) {
+        case TV_INT: {
+            char tmp[32];
+            snprintf(tmp, sizeof(tmp), "%lld", (long long)v->integer);
+            json_buf_append(buf, len, cap, tmp);
+            break;
+        }
+        case TV_FLOAT: {
+            char tmp[64];
+            snprintf(tmp, sizeof(tmp), "%g", v->floating);
+            json_buf_append(buf, len, cap, tmp);
+            break;
+        }
+        case TV_BOOL:
+            json_buf_append(buf, len, cap, v->boolean ? "true" : "false");
+            break;
+        case TV_STR: {
+            json_buf_append(buf, len, cap, "\"");
+            // Escape special characters
+            for (const char* p = v->string; *p; p++) {
+                switch (*p) {
+                    case '"':  json_buf_append(buf, len, cap, "\\\""); break;
+                    case '\\': json_buf_append(buf, len, cap, "\\\\"); break;
+                    case '\n': json_buf_append(buf, len, cap, "\\n"); break;
+                    case '\t': json_buf_append(buf, len, cap, "\\t"); break;
+                    case '\r': json_buf_append(buf, len, cap, "\\r"); break;
+                    default: {
+                        char ch[2] = { *p, '\0' };
+                        json_buf_append(buf, len, cap, ch);
+                    }
+                }
+            }
+            json_buf_append(buf, len, cap, "\"");
+            break;
+        }
+        case TV_ARRAY: {
+            json_buf_append(buf, len, cap, "[");
+            TorqArray* a = v->array;
+            for (int64_t i = 0; i < a->length; i++) {
+                if (i > 0) json_buf_append(buf, len, cap, ", ");
+                json_serialize(a->elements[i], buf, len, cap);
+            }
+            json_buf_append(buf, len, cap, "]");
+            break;
+        }
+        case TV_DICT: {
+            json_buf_append(buf, len, cap, "{");
+            TorqDict* d = v->dict;
+            for (int64_t i = 0; i < d->length; i++) {
+                if (i > 0) json_buf_append(buf, len, cap, ", ");
+                // Key is always a string
+                json_buf_append(buf, len, cap, "\"");
+                json_buf_append(buf, len, cap, d->entries[i].key);
+                json_buf_append(buf, len, cap, "\": ");
+                json_serialize(d->entries[i].value, buf, len, cap);
+            }
+            json_buf_append(buf, len, cap, "}");
+            break;
+        }
+        default:
+            json_buf_append(buf, len, cap, "null");
+            break;
+    }
+}
+
+TorqValue* torq_to_json(TorqValue* v) {
+    size_t cap = 256;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    buf[0] = '\0';
+    json_serialize(v, &buf, &len, &cap);
+    TorqValue* result = torq_str(buf);
+    free(buf);
+    return result;
+}
+

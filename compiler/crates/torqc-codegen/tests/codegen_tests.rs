@@ -535,3 +535,21 @@ fn log_output() {
     let output = compile_and_run(src);
     assert_eq!(output.trim(), "ok");
 }
+
+// ---------------------------------------------------------------------------
+// JSON tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn to_json_dict() {
+    let src = "::main\n  %user = { name \"alice\" age 30 }\n  %user | to_json | print\n";
+    let output = compile_and_run(src);
+    assert!(output.contains("\"name\"") && output.contains("\"alice\""));
+    assert!(output.contains("\"age\"") && output.contains("30"));
+}
+
+#[test]
+fn to_json_array() {
+    let src = "::main\n  @nums = [1 2 3]\n  @nums | to_json | print\n";
+    assert_eq!(compile_and_run(src).trim(), "[1, 2, 3]");
+}

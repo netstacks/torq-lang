@@ -109,6 +109,8 @@ struct RuntimeFuncs {
     torq_env: FuncId,             // (ptr) -> ptr
     torq_log: FuncId,             // (ptr) -> void
     torq_exit: FuncId,            // (ptr) -> void
+    // JSON
+    torq_to_json: FuncId,         // (ptr) -> ptr
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +387,11 @@ impl Compiler {
             .declare_function("torq_exit", Linkage::Import, &sig_ptr_to_void)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_exit: {}", e)))?;
 
+        // JSON functions
+        let torq_to_json = self.module
+            .declare_function("torq_to_json", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_to_json: {}", e)))?;
+
         Ok(RuntimeFuncs {
             torq_int,
             torq_float,
@@ -440,6 +447,7 @@ impl Compiler {
             torq_env,
             torq_log,
             torq_exit,
+            torq_to_json,
         })
     }
 
@@ -980,6 +988,14 @@ impl Compiler {
                         builder.ins().call(func_ref, &[val]);
                     }
                     pipe_val = None;
+                }
+                // JSON serialization
+                Expr::Call(call) if call.name == "to_json" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_to_json, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
                 }
                 _ => {
                     let result = self.compile_expr(stage, rt, builder, pipe_val)?;
