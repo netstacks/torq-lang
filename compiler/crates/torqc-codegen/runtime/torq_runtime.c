@@ -158,6 +158,156 @@ static void torq_fprint_value(FILE* f, TorqValue* v) {
     }
 }
 
+// ===== Arithmetic =====
+
+TorqValue* torq_add(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_int(0);
+    if (a->type == TV_INT && b->type == TV_INT)
+        return torq_int(a->integer + b->integer);
+    if (a->type == TV_FLOAT || b->type == TV_FLOAT) {
+        double fa = (a->type == TV_FLOAT) ? a->floating : (double)a->integer;
+        double fb = (b->type == TV_FLOAT) ? b->floating : (double)b->integer;
+        return torq_float(fa + fb);
+    }
+    if (a->type == TV_STR && b->type == TV_STR) {
+        size_t la = strlen(a->string), lb = strlen(b->string);
+        char* s = (char*)malloc(la + lb + 1);
+        memcpy(s, a->string, la);
+        memcpy(s + la, b->string, lb + 1);
+        TorqValue* v = torq_str(s);
+        free(s);
+        return v;
+    }
+    return torq_int(0);
+}
+
+TorqValue* torq_sub(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_int(0);
+    if (a->type == TV_INT && b->type == TV_INT)
+        return torq_int(a->integer - b->integer);
+    if (a->type == TV_FLOAT || b->type == TV_FLOAT) {
+        double fa = (a->type == TV_FLOAT) ? a->floating : (double)a->integer;
+        double fb = (b->type == TV_FLOAT) ? b->floating : (double)b->integer;
+        return torq_float(fa - fb);
+    }
+    return torq_int(0);
+}
+
+TorqValue* torq_mul(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_int(0);
+    if (a->type == TV_INT && b->type == TV_INT)
+        return torq_int(a->integer * b->integer);
+    if (a->type == TV_FLOAT || b->type == TV_FLOAT) {
+        double fa = (a->type == TV_FLOAT) ? a->floating : (double)a->integer;
+        double fb = (b->type == TV_FLOAT) ? b->floating : (double)b->integer;
+        return torq_float(fa * fb);
+    }
+    return torq_int(0);
+}
+
+TorqValue* torq_div(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_int(0);
+    if (a->type == TV_INT && b->type == TV_INT) {
+        // Division by zero returns zero (TORQ language convention)
+        if (b->integer == 0) return torq_int(0);
+        return torq_int(a->integer / b->integer);
+    }
+    if (a->type == TV_FLOAT || b->type == TV_FLOAT) {
+        double fa = (a->type == TV_FLOAT) ? a->floating : (double)a->integer;
+        double fb = (b->type == TV_FLOAT) ? b->floating : (double)b->integer;
+        if (fb == 0.0) return torq_float(0.0);
+        return torq_float(fa / fb);
+    }
+    return torq_int(0);
+}
+
+TorqValue* torq_mod(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_int(0);
+    if (a->type == TV_INT && b->type == TV_INT) {
+        if (b->integer == 0) return torq_int(0);
+        return torq_int(a->integer % b->integer);
+    }
+    return torq_int(0);
+}
+
+// ===== Comparison =====
+
+TorqValue* torq_eq(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_bool(a == b);
+    if (a->type != b->type) return torq_bool(0);
+    switch (a->type) {
+        case TV_INT:   return torq_bool(a->integer == b->integer);
+        case TV_FLOAT: return torq_bool(a->floating == b->floating); // exact comparison
+        case TV_BOOL:  return torq_bool(a->boolean == b->boolean);
+        case TV_STR:   return torq_bool(strcmp(a->string, b->string) == 0);
+        case TV_NULL:  return torq_bool(1);
+        case TV_ARRAY: // stub: array equality not yet implemented
+        case TV_DICT:  // stub: dict equality not yet implemented
+        default: return torq_bool(0);
+    }
+}
+
+TorqValue* torq_neq(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_bool(a != b);
+    if (a->type != b->type) return torq_bool(1);
+    switch (a->type) {
+        case TV_INT:   return torq_bool(a->integer != b->integer);
+        case TV_FLOAT: return torq_bool(a->floating != b->floating);
+        case TV_BOOL:  return torq_bool(a->boolean != b->boolean);
+        case TV_STR:   return torq_bool(strcmp(a->string, b->string) != 0);
+        case TV_NULL:  return torq_bool(0);
+        default:       return torq_bool(1);
+    }
+}
+
+TorqValue* torq_gt(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_bool(0);
+    if (a->type == TV_INT && b->type == TV_INT)
+        return torq_bool(a->integer > b->integer);
+    if (a->type == TV_FLOAT || b->type == TV_FLOAT) {
+        double fa = (a->type == TV_FLOAT) ? a->floating : (double)a->integer;
+        double fb = (b->type == TV_FLOAT) ? b->floating : (double)b->integer;
+        return torq_bool(fa > fb);
+    }
+    return torq_bool(0);
+}
+
+TorqValue* torq_lt(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_bool(0);
+    if (a->type == TV_INT && b->type == TV_INT)
+        return torq_bool(a->integer < b->integer);
+    if (a->type == TV_FLOAT || b->type == TV_FLOAT) {
+        double fa = (a->type == TV_FLOAT) ? a->floating : (double)a->integer;
+        double fb = (b->type == TV_FLOAT) ? b->floating : (double)b->integer;
+        return torq_bool(fa < fb);
+    }
+    return torq_bool(0);
+}
+
+TorqValue* torq_gte(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_bool(0);
+    if (a->type == TV_INT && b->type == TV_INT)
+        return torq_bool(a->integer >= b->integer);
+    if (a->type == TV_FLOAT || b->type == TV_FLOAT) {
+        double fa = (a->type == TV_FLOAT) ? a->floating : (double)a->integer;
+        double fb = (b->type == TV_FLOAT) ? b->floating : (double)b->integer;
+        return torq_bool(fa >= fb);
+    }
+    return torq_bool(0);
+}
+
+TorqValue* torq_lte(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_bool(0);
+    if (a->type == TV_INT && b->type == TV_INT)
+        return torq_bool(a->integer <= b->integer);
+    if (a->type == TV_FLOAT || b->type == TV_FLOAT) {
+        double fa = (a->type == TV_FLOAT) ? a->floating : (double)a->integer;
+        double fb = (b->type == TV_FLOAT) ? b->floating : (double)b->integer;
+        return torq_bool(fa <= fb);
+    }
+    return torq_bool(0);
+}
+
 // ===== Legacy compatibility — remove after Task 3 codegen refactor =====
 
 void torq_print_int(int64_t n) { printf("%lld\n", (long long)n); }
