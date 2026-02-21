@@ -103,6 +103,12 @@ struct RuntimeFuncs {
     torq_math_round: FuncId,      // (ptr) -> ptr
     torq_math_min: FuncId,        // (ptr, ptr) -> ptr
     torq_math_max: FuncId,        // (ptr, ptr) -> ptr
+    // I/O
+    torq_fs_read: FuncId,         // (ptr) -> ptr
+    torq_fs_write: FuncId,        // (ptr, ptr) -> void
+    torq_env: FuncId,             // (ptr) -> ptr
+    torq_log: FuncId,             // (ptr) -> void
+    torq_exit: FuncId,            // (ptr) -> void
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +368,23 @@ impl Compiler {
             .declare_function("torq_math_max", Linkage::Import, &sig_pp_to_ptr)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_math_max: {}", e)))?;
 
+        // I/O functions
+        let torq_fs_read = self.module
+            .declare_function("torq_fs_read", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_fs_read: {}", e)))?;
+        let torq_fs_write = self.module
+            .declare_function("torq_fs_write", Linkage::Import, &sig_pp_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_fs_write: {}", e)))?;
+        let torq_env = self.module
+            .declare_function("torq_env", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_env: {}", e)))?;
+        let torq_log = self.module
+            .declare_function("torq_log", Linkage::Import, &sig_ptr_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_log: {}", e)))?;
+        let torq_exit = self.module
+            .declare_function("torq_exit", Linkage::Import, &sig_ptr_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_exit: {}", e)))?;
+
         Ok(RuntimeFuncs {
             torq_int,
             torq_float,
@@ -412,6 +435,11 @@ impl Compiler {
             torq_math_round,
             torq_math_min,
             torq_math_max,
+            torq_fs_read,
+            torq_fs_write,
+            torq_env,
+            torq_log,
+            torq_exit,
         })
     }
 
@@ -586,6 +614,23 @@ impl Compiler {
                     let func_ref = self.module.declare_func_in_func(rt.torq_print, builder.func);
                     builder.ins().call(func_ref, &[val]);
                 }
+                Ok(None)
+            }
+            Statement::Expression(Expr::Call(call)) if call.name == "log" => {
+                // Direct log call: `log "message"` or `log $var`
+                if let Some(arg) = call.args.first() {
+                    let val = self.compile_expr(arg, rt, builder, None)?;
+                    let func_ref = self.module.declare_func_in_func(rt.torq_log, builder.func);
+                    builder.ins().call(func_ref, &[val]);
+                }
+                Ok(None)
+            }
+            Statement::Expression(Expr::Call(call)) if call.name == "fs_write" && call.args.len() == 2 => {
+                // Direct fs_write call: `fs_write "/path" $content`
+                let path = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let content = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_fs_write, builder.func);
+                builder.ins().call(func_ref, &[path, content]);
                 Ok(None)
             }
             Statement::Pipeline(pipeline) => {
@@ -913,6 +958,29 @@ impl Compiler {
                         pipe_val = Some(builder.inst_results(inst)[0]);
                     }
                 }
+                // I/O operations
+                Expr::Call(call) if call.name == "fs_read" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_fs_read, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "fs_write" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let path = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_fs_write, builder.func);
+                        builder.ins().call(func_ref, &[path, val]);
+                        pipe_val = None;
+                    }
+                }
+                Expr::Call(call) if call.name == "log" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_log, builder.func);
+                        builder.ins().call(func_ref, &[val]);
+                    }
+                    pipe_val = None;
+                }
                 _ => {
                     let result = self.compile_expr(stage, rt, builder, pipe_val)?;
                     pipe_val = Some(result);
@@ -1173,6 +1241,44 @@ impl Compiler {
 
                 let get_fn = self.module.declare_func_in_func(rt.torq_dict_get, builder.func);
                 let inst = builder.ins().call(get_fn, &[obj, key_ptr]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            // I/O functions as expressions
+            Expr::Call(call) if call.name == "fs_read" && call.args.len() == 1 => {
+                let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_fs_read, builder.func);
+                let inst = builder.ins().call(func_ref, &[arg]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "fs_write" && call.args.len() == 2 => {
+                let path = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let content = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_fs_write, builder.func);
+                builder.ins().call(func_ref, &[path, content]);
+                let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(null_fn, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "env" && call.args.len() == 1 => {
+                let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_env, builder.func);
+                let inst = builder.ins().call(func_ref, &[arg]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "log" => {
+                let val = if let Some(arg) = call.args.first() {
+                    self.compile_expr(arg, rt, builder, None)?
+                } else if let Some(pv) = pipe_value {
+                    pv
+                } else {
+                    let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                    let inst = builder.ins().call(null_fn, &[]);
+                    builder.inst_results(inst)[0]
+                };
+                let func_ref = self.module.declare_func_in_func(rt.torq_log, builder.func);
+                builder.ins().call(func_ref, &[val]);
+                let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(null_fn, &[]);
                 Ok(builder.inst_results(inst)[0])
             }
             Expr::StringInterp(parts, _) => {

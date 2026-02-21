@@ -726,3 +726,49 @@ TorqValue* torq_math_max(TorqValue* a, TorqValue* b) {
     return (va >= vb) ? a : b;
 }
 
+// ===== I/O =====
+
+TorqValue* torq_fs_read(TorqValue* path) {
+    if (!path || path->type != TV_STR) return torq_null();
+    FILE* f = fopen(path->string, "r");
+    if (!f) return torq_null();
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* buf = (char*)malloc(len + 1);
+    fread(buf, 1, len, f);
+    buf[len] = '\0';
+    fclose(f);
+    TorqValue* result = torq_str(buf);
+    free(buf);
+    return result;
+}
+
+void torq_fs_write(TorqValue* path, TorqValue* content) {
+    if (!path || path->type != TV_STR || !content || content->type != TV_STR) return;
+    FILE* f = fopen(path->string, "w");
+    if (f) { fputs(content->string, f); fclose(f); }
+}
+
+TorqValue* torq_env(TorqValue* name) {
+    if (!name || name->type != TV_STR) return torq_null();
+    const char* val = getenv(name->string);
+    return val ? torq_str(val) : torq_null();
+}
+
+void torq_log(TorqValue* v) {
+    if (!v) { fprintf(stderr, "null\n"); return; }
+    switch (v->type) {
+        case TV_NULL:  fprintf(stderr, "null\n"); break;
+        case TV_INT:   fprintf(stderr, "%lld\n", (long long)v->integer); break;
+        case TV_FLOAT: fprintf(stderr, "%g\n", v->floating); break;
+        case TV_BOOL:  fprintf(stderr, "%s\n", v->boolean ? "true" : "false"); break;
+        case TV_STR:   fprintf(stderr, "%s\n", v->string); break;
+        default:       fprintf(stderr, "[value]\n"); break;
+    }
+}
+
+void torq_exit(TorqValue* code) {
+    exit((int)torq_as_int(code));
+}
+

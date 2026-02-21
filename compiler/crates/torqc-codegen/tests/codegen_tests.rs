@@ -516,3 +516,22 @@ fn math_floor_ceil() {
     let output = compile_and_run("::main\n  3.7 | floor | print\n  3.2 | ceil | print\n");
     assert_eq!(output.trim(), "3\n4");
 }
+
+// ---------------------------------------------------------------------------
+// I/O tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fs_read_write() {
+    let src = "::main\n  \"hello from torq\" -> $msg\n  fs_write \"/tmp/torq_test_io.txt\" $msg\n  fs_read \"/tmp/torq_test_io.txt\" | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "hello from torq");
+    let _ = std::fs::remove_file("/tmp/torq_test_io.txt");
+}
+
+#[test]
+fn log_output() {
+    let src = "::main\n  log \"test message\"\n  print \"ok\"\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "ok");
+}
