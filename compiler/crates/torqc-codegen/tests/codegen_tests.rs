@@ -476,3 +476,21 @@ fn string_split_and_join() {
     let output = compile_and_run("::main\n  \"a,b,c\" | split \",\" | join \"-\" | print\n");
     assert_eq!(output.trim(), "a-b-c");
 }
+
+// ---------------------------------------------------------------------------
+// String interpolation tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_interpolation() {
+    let src = "::main\n  \"alice\" -> $name\n  \"hello $name\" | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "hello alice");
+}
+
+#[test]
+fn string_interpolation_with_int() {
+    let src = "::main\n  42 -> $age\n  \"age is $age\" | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "age is 42");
+}

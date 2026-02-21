@@ -615,6 +615,39 @@ TorqValue* torq_str_reverse(TorqValue* v) {
     return result;
 }
 
+TorqValue* torq_to_string(TorqValue* v) {
+    if (!v) return torq_str("null");
+    switch (v->type) {
+        case TV_STR: return v;  // Already a string
+        case TV_INT: {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%lld", (long long)v->integer);
+            return torq_str(buf);
+        }
+        case TV_FLOAT: {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%g", v->floating);
+            return torq_str(buf);
+        }
+        case TV_BOOL: return torq_str(v->boolean ? "true" : "false");
+        case TV_NULL: return torq_str("null");
+        default: return torq_str("");
+    }
+}
+
+TorqValue* torq_str_concat(TorqValue* a, TorqValue* b) {
+    TorqValue* sa = torq_to_string(a);
+    TorqValue* sb = torq_to_string(b);
+    size_t la = strlen(sa->string);
+    size_t lb = strlen(sb->string);
+    char* s = (char*)malloc(la + lb + 1);
+    memcpy(s, sa->string, la);
+    memcpy(s + la, sb->string, lb + 1);
+    TorqValue* result = torq_str(s);
+    free(s);
+    return result;
+}
+
 TorqValue* torq_join(TorqValue* arr, TorqValue* delim) {
     if (!arr || arr->type != TV_ARRAY || arr->array->length == 0) return torq_str("");
     const char* d = (delim && delim->type == TV_STR) ? delim->string : "";

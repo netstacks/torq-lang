@@ -10,7 +10,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable as Cr
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use torqc_ast::ast::{BinOpKind, Block, Expr, Literal, Pattern, Program, Statement};
+use torqc_ast::ast::{BinOpKind, Block, Expr, Literal, Pattern, Program, Statement, StringPart};
 
 // ---------------------------------------------------------------------------
 // CodegenError
@@ -92,6 +92,9 @@ struct RuntimeFuncs {
     torq_str_slice: FuncId,       // (ptr, ptr, ptr) -> ptr
     torq_str_reverse: FuncId,     // (ptr) -> ptr
     torq_join: FuncId,            // (ptr, ptr) -> ptr
+    // String interpolation support
+    torq_to_string: FuncId,       // (ptr) -> ptr
+    torq_str_concat: FuncId,      // (ptr, ptr) -> ptr
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +324,12 @@ impl Compiler {
         let torq_join = self.module
             .declare_function("torq_join", Linkage::Import, &sig_pp_to_ptr)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_join: {}", e)))?;
+        let torq_to_string = self.module
+            .declare_function("torq_to_string", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_to_string: {}", e)))?;
+        let torq_str_concat = self.module
+            .declare_function("torq_str_concat", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_concat: {}", e)))?;
 
         Ok(RuntimeFuncs {
             torq_int,
@@ -363,6 +372,8 @@ impl Compiler {
             torq_str_slice,
             torq_str_reverse,
             torq_join,
+            torq_to_string,
+            torq_str_concat,
         })
     }
 
@@ -1072,6 +1083,55 @@ impl Compiler {
                 let get_fn = self.module.declare_func_in_func(rt.torq_dict_get, builder.func);
                 let inst = builder.ins().call(get_fn, &[obj, key_ptr]);
                 Ok(builder.inst_results(inst)[0])
+            }
+            Expr::StringInterp(parts, _) => {
+                let pointer_type = self.module.target_config().pointer_type();
+                let mut result: Option<Value> = None;
+
+                for part in parts {
+                    let part_val = match part {
+                        StringPart::Literal(s) => {
+                            // Create string data and call torq_str
+                            let data_id = create_string_data(&mut self.module, &mut self.str_counter, s)?;
+                            let gv = self.module.declare_data_in_func(data_id, builder.func);
+                            let ptr = builder.ins().global_value(pointer_type, gv);
+                            let str_fn = self.module.declare_func_in_func(rt.torq_str, builder.func);
+                            let inst = builder.ins().call(str_fn, &[ptr]);
+                            builder.inst_results(inst)[0]
+                        }
+                        StringPart::Interpolation(var) => {
+                            // Look up variable and convert to string
+                            let cl_var = self.variables.get(&var.name)
+                                .ok_or_else(|| CodegenError::new(format!("undefined variable: ${}", var.name)))?;
+                            let var_val = builder.use_var(*cl_var);
+                            let to_str_fn = self.module.declare_func_in_func(rt.torq_to_string, builder.func);
+                            let inst = builder.ins().call(to_str_fn, &[var_val]);
+                            builder.inst_results(inst)[0]
+                        }
+                    };
+
+                    result = Some(match result {
+                        None => part_val,
+                        Some(prev) => {
+                            let concat_fn = self.module.declare_func_in_func(rt.torq_str_concat, builder.func);
+                            let inst = builder.ins().call(concat_fn, &[prev, part_val]);
+                            builder.inst_results(inst)[0]
+                        }
+                    });
+                }
+
+                // If no parts, return empty string
+                match result {
+                    Some(val) => Ok(val),
+                    None => {
+                        let data_id = create_string_data(&mut self.module, &mut self.str_counter, "")?;
+                        let gv = self.module.declare_data_in_func(data_id, builder.func);
+                        let ptr = builder.ins().global_value(pointer_type, gv);
+                        let str_fn = self.module.declare_func_in_func(rt.torq_str, builder.func);
+                        let inst = builder.ins().call(str_fn, &[ptr]);
+                        Ok(builder.inst_results(inst)[0])
+                    }
+                }
             }
             _ => Err(CodegenError::new(format!(
                 "unsupported expression: {:?}",
