@@ -494,3 +494,25 @@ fn string_interpolation_with_int() {
     let output = compile_and_run(src);
     assert_eq!(output.trim(), "age is 42");
 }
+
+// ---------------------------------------------------------------------------
+// Math tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_sqrt() {
+    let output = compile_and_run("::main\n  144 | sqrt | print\n");
+    assert_eq!(output.trim(), "12");
+}
+
+#[test]
+fn math_abs() {
+    let output = compile_and_run("::main\n  (0 - 42) | abs | print\n");
+    assert_eq!(output.trim(), "42");
+}
+
+#[test]
+fn math_floor_ceil() {
+    let output = compile_and_run("::main\n  3.7 | floor | print\n  3.2 | ceil | print\n");
+    assert_eq!(output.trim(), "3\n4");
+}

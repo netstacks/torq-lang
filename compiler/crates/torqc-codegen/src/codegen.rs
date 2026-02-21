@@ -95,6 +95,14 @@ struct RuntimeFuncs {
     // String interpolation support
     torq_to_string: FuncId,       // (ptr) -> ptr
     torq_str_concat: FuncId,      // (ptr, ptr) -> ptr
+    // Math
+    torq_math_abs: FuncId,        // (ptr) -> ptr
+    torq_math_sqrt: FuncId,       // (ptr) -> ptr
+    torq_math_floor: FuncId,      // (ptr) -> ptr
+    torq_math_ceil: FuncId,       // (ptr) -> ptr
+    torq_math_round: FuncId,      // (ptr) -> ptr
+    torq_math_min: FuncId,        // (ptr, ptr) -> ptr
+    torq_math_max: FuncId,        // (ptr, ptr) -> ptr
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +339,29 @@ impl Compiler {
             .declare_function("torq_str_concat", Linkage::Import, &sig_pp_to_ptr)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_str_concat: {}", e)))?;
 
+        // Math functions
+        let torq_math_abs = self.module
+            .declare_function("torq_math_abs", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_math_abs: {}", e)))?;
+        let torq_math_sqrt = self.module
+            .declare_function("torq_math_sqrt", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_math_sqrt: {}", e)))?;
+        let torq_math_floor = self.module
+            .declare_function("torq_math_floor", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_math_floor: {}", e)))?;
+        let torq_math_ceil = self.module
+            .declare_function("torq_math_ceil", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_math_ceil: {}", e)))?;
+        let torq_math_round = self.module
+            .declare_function("torq_math_round", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_math_round: {}", e)))?;
+        let torq_math_min = self.module
+            .declare_function("torq_math_min", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_math_min: {}", e)))?;
+        let torq_math_max = self.module
+            .declare_function("torq_math_max", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_math_max: {}", e)))?;
+
         Ok(RuntimeFuncs {
             torq_int,
             torq_float,
@@ -374,6 +405,13 @@ impl Compiler {
             torq_join,
             torq_to_string,
             torq_str_concat,
+            torq_math_abs,
+            torq_math_sqrt,
+            torq_math_floor,
+            torq_math_ceil,
+            torq_math_round,
+            torq_math_min,
+            torq_math_max,
         })
     }
 
@@ -819,6 +857,59 @@ impl Compiler {
                         let arg1 = self.compile_expr(&call.args[1], rt, builder, None)?;
                         let func_ref = self.module.declare_func_in_func(rt.torq_str_slice, builder.func);
                         let inst = builder.ins().call(func_ref, &[val, arg0, arg1]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Math operations — no extra args (pipe value only)
+                Expr::Call(call) if call.name == "abs" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_math_abs, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "sqrt" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_math_sqrt, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "floor" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_math_floor, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "ceil" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_math_ceil, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "round" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_math_round, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Math operations — one extra arg (pipe value + 1 arg)
+                Expr::Call(call) if call.name == "min" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_math_min, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "max" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_math_max, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
                         pipe_val = Some(builder.inst_results(inst)[0]);
                     }
                 }

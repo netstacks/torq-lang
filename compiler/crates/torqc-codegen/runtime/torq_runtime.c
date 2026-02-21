@@ -676,3 +676,53 @@ TorqValue* torq_join(TorqValue* arr, TorqValue* delim) {
     return result;
 }
 
+// ===== Math =====
+
+TorqValue* torq_math_abs(TorqValue* v) {
+    if (!v) return torq_int(0);
+    if (v->type == TV_INT) return torq_int(llabs(v->integer));
+    if (v->type == TV_FLOAT) return torq_float(fabs(v->floating));
+    return v;
+}
+
+TorqValue* torq_math_sqrt(TorqValue* v) {
+    if (!v) return torq_float(0.0);
+    double n = (v->type == TV_FLOAT) ? v->floating : (double)torq_as_int(v);
+    return torq_float(sqrt(n));
+}
+
+TorqValue* torq_math_floor(TorqValue* v) {
+    if (!v) return torq_int(0);
+    if (v->type == TV_INT) return v;
+    if (v->type == TV_FLOAT) return torq_int((int64_t)floor(v->floating));
+    return torq_int(0);
+}
+
+TorqValue* torq_math_ceil(TorqValue* v) {
+    if (!v) return torq_int(0);
+    if (v->type == TV_INT) return v;
+    if (v->type == TV_FLOAT) return torq_int((int64_t)ceil(v->floating));
+    return torq_int(0);
+}
+
+TorqValue* torq_math_round(TorqValue* v) {
+    if (!v) return torq_int(0);
+    if (v->type == TV_INT) return v;
+    if (v->type == TV_FLOAT) return torq_int((int64_t)round(v->floating));
+    return torq_int(0);
+}
+
+TorqValue* torq_math_min(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return a ? a : (b ? b : torq_int(0));
+    double va = (a->type == TV_FLOAT) ? a->floating : (double)torq_as_int(a);
+    double vb = (b->type == TV_FLOAT) ? b->floating : (double)torq_as_int(b);
+    return (va <= vb) ? a : b;
+}
+
+TorqValue* torq_math_max(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return a ? a : (b ? b : torq_int(0));
+    double va = (a->type == TV_FLOAT) ? a->floating : (double)torq_as_int(a);
+    double vb = (b->type == TV_FLOAT) ? b->floating : (double)torq_as_int(b);
+    return (va >= vb) ? a : b;
+}
+
