@@ -389,3 +389,25 @@ fn block_returning_match() {
     let output = compile_and_run(src);
     assert_eq!(output.trim(), "1\n0");
 }
+
+// ---------------------------------------------------------------------------
+// Array tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn array_create_and_print() {
+    let output = compile_and_run("::main\n  @nums = [1 2 3]\n  @nums | print\n");
+    assert_eq!(output.trim(), "[1, 2, 3]");
+}
+
+#[test]
+fn array_len() {
+    let output = compile_and_run("::main\n  @names = [\"a\" \"b\" \"c\"]\n  @names | len | print\n");
+    assert_eq!(output.trim(), "3");
+}
+
+#[test]
+fn array_first_last() {
+    let output = compile_and_run("::main\n  @nums = [10 20 30]\n  @nums | first | print\n  @nums | last | print\n");
+    assert_eq!(output.trim(), "10\n30");
+}

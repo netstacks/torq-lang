@@ -66,6 +66,13 @@ struct RuntimeFuncs {
     // Utilities
     torq_is_truthy: FuncId, // (ptr) -> i64
     torq_as_int: FuncId,    // (ptr) -> i64
+    // Array
+    torq_array_new: FuncId,       // () -> ptr
+    torq_array_push_mut: FuncId,  // (ptr, ptr) -> void
+    torq_array_len: FuncId,       // (ptr) -> ptr
+    torq_array_first: FuncId,     // (ptr) -> ptr
+    torq_array_last: FuncId,      // (ptr) -> ptr
+    torq_array_get: FuncId,       // (ptr, ptr) -> ptr
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +219,30 @@ impl Compiler {
             .declare_function("torq_as_int", Linkage::Import, &sig_ptr_to_i64)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_as_int: {}", e)))?;
 
+        // Signature: (ptr, ptr) -> void  — for torq_array_push_mut
+        let mut sig_pp_to_void = self.module.make_signature();
+        sig_pp_to_void.params.push(AbiParam::new(ptr));
+        sig_pp_to_void.params.push(AbiParam::new(ptr));
+
+        let torq_array_new = self.module
+            .declare_function("torq_array_new", Linkage::Import, &sig_void_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_new: {}", e)))?;
+        let torq_array_push_mut = self.module
+            .declare_function("torq_array_push_mut", Linkage::Import, &sig_pp_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_push_mut: {}", e)))?;
+        let torq_array_len = self.module
+            .declare_function("torq_array_len", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_len: {}", e)))?;
+        let torq_array_first = self.module
+            .declare_function("torq_array_first", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_first: {}", e)))?;
+        let torq_array_last = self.module
+            .declare_function("torq_array_last", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_last: {}", e)))?;
+        let torq_array_get = self.module
+            .declare_function("torq_array_get", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_get: {}", e)))?;
+
         Ok(RuntimeFuncs {
             torq_int,
             torq_float,
@@ -232,6 +263,12 @@ impl Compiler {
             torq_lte,
             torq_is_truthy,
             torq_as_int,
+            torq_array_new,
+            torq_array_push_mut,
+            torq_array_len,
+            torq_array_first,
+            torq_array_last,
+            torq_array_get,
         })
     }
 
@@ -570,6 +607,27 @@ impl Compiler {
                     }
                     pipe_val = None;
                 }
+                Expr::Call(call) if call.name == "len" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_len, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "first" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_first, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "last" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_last, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
                 _ => {
                     let result = self.compile_expr(stage, rt, builder, pipe_val)?;
                     pipe_val = Some(result);
@@ -784,6 +842,21 @@ impl Compiler {
 
                 // Dummy value (never used -- unreachable code)
                 Ok(builder.ins().iconst(types::I64, 0))
+            }
+            Expr::Array(elements, _) => {
+                // Create new array
+                let new_fn = self.module.declare_func_in_func(rt.torq_array_new, builder.func);
+                let inst = builder.ins().call(new_fn, &[]);
+                let arr = builder.inst_results(inst)[0];
+
+                // Push each element
+                let push_fn = self.module.declare_func_in_func(rt.torq_array_push_mut, builder.func);
+                for elem in elements {
+                    let val = self.compile_expr(elem, rt, builder, None)?;
+                    builder.ins().call(push_fn, &[arr, val]);
+                }
+
+                Ok(arr)
             }
             _ => Err(CodegenError::new(format!(
                 "unsupported expression: {:?}",

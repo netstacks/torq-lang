@@ -134,10 +134,22 @@ void torq_print(TorqValue* v) {
     }
 }
 
-// Stub implementations for collection printing (will be replaced in Tasks 4 and 5)
+// Array printing — proper implementation
 static void torq_print_array_value(TorqValue* v) {
-    (void)v;
-    printf("[array]");
+    if (!v || v->type != TV_ARRAY) { printf("[array]"); return; }
+    TorqArray* a = v->array;
+    putchar('[');
+    for (int64_t i = 0; i < a->length; i++) {
+        if (i > 0) printf(", ");
+        TorqValue* elem = a->elements[i];
+        if (elem && elem->type == TV_STR) {
+            // Strings are quoted in array display
+            printf("\"%s\"", elem->string);
+        } else {
+            torq_fprint_value(stdout, elem);
+        }
+    }
+    putchar(']');
 }
 
 static void torq_print_dict_value(TorqValue* v) {
@@ -153,7 +165,7 @@ static void torq_fprint_value(FILE* f, TorqValue* v) {
         case TV_FLOAT: fprintf(f, "%g", v->floating); break;
         case TV_BOOL:  fprintf(f, "%s", v->boolean ? "true" : "false"); break;
         case TV_STR:   fprintf(f, "%s", v->string); break;
-        case TV_ARRAY: fprintf(f, "[array]"); break;
+        case TV_ARRAY: torq_print_array_value(v); break;
         case TV_DICT:  fprintf(f, "{dict}"); break;
     }
 }
@@ -319,5 +331,49 @@ TorqValue* torq_lte(TorqValue* a, TorqValue* b) {
         return torq_bool(fa <= fb);
     }
     return torq_bool(0);
+}
+
+// ===== Array =====
+
+TorqValue* torq_array_new(void) {
+    TorqValue* v = (TorqValue*)malloc(sizeof(TorqValue));
+    v->type = TV_ARRAY;
+    v->array = (TorqArray*)malloc(sizeof(TorqArray));
+    v->array->capacity = 8;
+    v->array->length = 0;
+    v->array->elements = (TorqValue**)calloc(8, sizeof(TorqValue*));
+    return v;
+}
+
+void torq_array_push_mut(TorqValue* arr, TorqValue* val) {
+    if (!arr || arr->type != TV_ARRAY) return;
+    TorqArray* a = arr->array;
+    if (a->length >= a->capacity) {
+        a->capacity *= 2;
+        a->elements = (TorqValue**)realloc(a->elements, a->capacity * sizeof(TorqValue*));
+    }
+    a->elements[a->length++] = val;
+}
+
+TorqValue* torq_array_len(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY) return torq_int(0);
+    return torq_int(arr->array->length);
+}
+
+TorqValue* torq_array_first(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY || arr->array->length == 0) return torq_null();
+    return arr->array->elements[0];
+}
+
+TorqValue* torq_array_last(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY || arr->array->length == 0) return torq_null();
+    return arr->array->elements[arr->array->length - 1];
+}
+
+TorqValue* torq_array_get(TorqValue* arr, TorqValue* index) {
+    if (!arr || arr->type != TV_ARRAY) return torq_null();
+    int64_t i = torq_as_int(index);
+    if (i < 0 || i >= arr->array->length) return torq_null();
+    return arr->array->elements[i];
 }
 
