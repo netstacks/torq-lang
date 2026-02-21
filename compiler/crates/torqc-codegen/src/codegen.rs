@@ -38,28 +38,34 @@ impl fmt::Display for CodegenError {
 impl std::error::Error for CodegenError {}
 
 // ---------------------------------------------------------------------------
-// TorqType — tracks the type of a compiled value
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TorqType {
-    I64,
-    Ptr,
-    Bool,
-    F64,
-    Void,
-}
-
-// ---------------------------------------------------------------------------
 // Runtime function IDs
 // ---------------------------------------------------------------------------
 
 struct RuntimeFuncs {
-    print_int: FuncId,
-    print_str: FuncId,
-    print_bool: FuncId,
-    print_float: FuncId,
-    print_null: FuncId,
+    // Constructors
+    torq_int: FuncId,       // (i64) -> ptr
+    torq_float: FuncId,     // (f64) -> ptr
+    torq_bool: FuncId,      // (i64) -> ptr
+    torq_str: FuncId,       // (ptr) -> ptr
+    torq_null: FuncId,      // () -> ptr
+    // Print
+    torq_print: FuncId,     // (ptr) -> void
+    // Arithmetic
+    torq_add: FuncId,       // (ptr, ptr) -> ptr
+    torq_sub: FuncId,
+    torq_mul: FuncId,
+    torq_div: FuncId,
+    torq_mod: FuncId,
+    // Comparison
+    torq_eq: FuncId,        // (ptr, ptr) -> ptr
+    torq_neq: FuncId,
+    torq_gt: FuncId,
+    torq_lt: FuncId,
+    torq_gte: FuncId,
+    torq_lte: FuncId,
+    // Utilities
+    torq_is_truthy: FuncId, // (ptr) -> i64
+    torq_as_int: FuncId,    // (ptr) -> i64
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +75,7 @@ struct RuntimeFuncs {
 pub struct Compiler {
     module: ObjectModule,
     str_counter: usize,
-    variables: HashMap<String, (CraneliftVar, TorqType)>,
+    variables: HashMap<String, CraneliftVar>,
     /// Map from block name -> (FuncId, param_count) for user-defined blocks.
     block_funcs: HashMap<String, (FuncId, usize)>,
     /// Stack of loop exit blocks for resolving `break` statements.
@@ -112,53 +118,120 @@ impl Compiler {
 
     /// Declare all TORQ runtime functions and return their FuncIds.
     fn declare_runtime_funcs(&mut self) -> Result<RuntimeFuncs, CodegenError> {
-        let pointer_type = self.module.target_config().pointer_type();
+        let ptr = self.module.target_config().pointer_type();
 
-        // torq_print_int(int64_t) -> void
-        let mut sig_int = self.module.make_signature();
-        sig_int.params.push(AbiParam::new(I64));
-        let print_int = self
-            .module
-            .declare_function("torq_print_int", Linkage::Import, &sig_int)
-            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_int: {}", e)))?;
+        // Signature: (I64) -> ptr  — for torq_int, torq_bool
+        let mut sig_i64_to_ptr = self.module.make_signature();
+        sig_i64_to_ptr.params.push(AbiParam::new(I64));
+        sig_i64_to_ptr.returns.push(AbiParam::new(ptr));
 
-        // torq_print_str(const char*) -> void
-        let mut sig_str = self.module.make_signature();
-        sig_str.params.push(AbiParam::new(pointer_type));
-        let print_str = self
-            .module
-            .declare_function("torq_print_str", Linkage::Import, &sig_str)
-            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_str: {}", e)))?;
+        // Signature: (F64) -> ptr  — for torq_float
+        let mut sig_f64_to_ptr = self.module.make_signature();
+        sig_f64_to_ptr.params.push(AbiParam::new(types::F64));
+        sig_f64_to_ptr.returns.push(AbiParam::new(ptr));
 
-        // torq_print_bool(int64_t) -> void
-        let mut sig_bool = self.module.make_signature();
-        sig_bool.params.push(AbiParam::new(I64));
-        let print_bool = self
-            .module
-            .declare_function("torq_print_bool", Linkage::Import, &sig_bool)
-            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_bool: {}", e)))?;
+        // Signature: (ptr) -> ptr  — for torq_str
+        let mut sig_ptr_to_ptr = self.module.make_signature();
+        sig_ptr_to_ptr.params.push(AbiParam::new(ptr));
+        sig_ptr_to_ptr.returns.push(AbiParam::new(ptr));
 
-        // torq_print_float(double) -> void
-        let mut sig_float = self.module.make_signature();
-        sig_float.params.push(AbiParam::new(types::F64));
-        let print_float = self
-            .module
-            .declare_function("torq_print_float", Linkage::Import, &sig_float)
-            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_float: {}", e)))?;
+        // Signature: () -> ptr  — for torq_null
+        let mut sig_void_to_ptr = self.module.make_signature();
+        sig_void_to_ptr.returns.push(AbiParam::new(ptr));
 
-        // torq_print_null() -> void
-        let sig_null = self.module.make_signature();
-        let print_null = self
-            .module
-            .declare_function("torq_print_null", Linkage::Import, &sig_null)
-            .map_err(|e| CodegenError::new(format!("failed to declare torq_print_null: {}", e)))?;
+        // Signature: (ptr) -> void  — for torq_print
+        let mut sig_ptr_to_void = self.module.make_signature();
+        sig_ptr_to_void.params.push(AbiParam::new(ptr));
+
+        // Signature: (ptr, ptr) -> ptr  — for arithmetic and comparison
+        let mut sig_pp_to_ptr = self.module.make_signature();
+        sig_pp_to_ptr.params.push(AbiParam::new(ptr));
+        sig_pp_to_ptr.params.push(AbiParam::new(ptr));
+        sig_pp_to_ptr.returns.push(AbiParam::new(ptr));
+
+        // Signature: (ptr) -> I64  — for torq_is_truthy, torq_as_int
+        let mut sig_ptr_to_i64 = self.module.make_signature();
+        sig_ptr_to_i64.params.push(AbiParam::new(ptr));
+        sig_ptr_to_i64.returns.push(AbiParam::new(I64));
+
+        let torq_int = self.module
+            .declare_function("torq_int", Linkage::Import, &sig_i64_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_int: {}", e)))?;
+        let torq_float = self.module
+            .declare_function("torq_float", Linkage::Import, &sig_f64_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_float: {}", e)))?;
+        let torq_bool = self.module
+            .declare_function("torq_bool", Linkage::Import, &sig_i64_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_bool: {}", e)))?;
+        let torq_str = self.module
+            .declare_function("torq_str", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str: {}", e)))?;
+        let torq_null = self.module
+            .declare_function("torq_null", Linkage::Import, &sig_void_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_null: {}", e)))?;
+        let torq_print = self.module
+            .declare_function("torq_print", Linkage::Import, &sig_ptr_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_print: {}", e)))?;
+        let torq_add = self.module
+            .declare_function("torq_add", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_add: {}", e)))?;
+        let torq_sub = self.module
+            .declare_function("torq_sub", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_sub: {}", e)))?;
+        let torq_mul = self.module
+            .declare_function("torq_mul", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_mul: {}", e)))?;
+        let torq_div = self.module
+            .declare_function("torq_div", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_div: {}", e)))?;
+        let torq_mod = self.module
+            .declare_function("torq_mod", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_mod: {}", e)))?;
+        let torq_eq = self.module
+            .declare_function("torq_eq", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_eq: {}", e)))?;
+        let torq_neq = self.module
+            .declare_function("torq_neq", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_neq: {}", e)))?;
+        let torq_gt = self.module
+            .declare_function("torq_gt", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_gt: {}", e)))?;
+        let torq_lt = self.module
+            .declare_function("torq_lt", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_lt: {}", e)))?;
+        let torq_gte = self.module
+            .declare_function("torq_gte", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_gte: {}", e)))?;
+        let torq_lte = self.module
+            .declare_function("torq_lte", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_lte: {}", e)))?;
+        let torq_is_truthy = self.module
+            .declare_function("torq_is_truthy", Linkage::Import, &sig_ptr_to_i64)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_is_truthy: {}", e)))?;
+        let torq_as_int = self.module
+            .declare_function("torq_as_int", Linkage::Import, &sig_ptr_to_i64)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_as_int: {}", e)))?;
 
         Ok(RuntimeFuncs {
-            print_int,
-            print_str,
-            print_bool,
-            print_float,
-            print_null,
+            torq_int,
+            torq_float,
+            torq_bool,
+            torq_str,
+            torq_null,
+            torq_print,
+            torq_add,
+            torq_sub,
+            torq_mul,
+            torq_div,
+            torq_mod,
+            torq_eq,
+            torq_neq,
+            torq_gt,
+            torq_lt,
+            torq_gte,
+            torq_lte,
+            torq_is_truthy,
+            torq_as_int,
         })
     }
 
@@ -177,7 +250,7 @@ impl Compiler {
         // ---------------------------------------------------------------
         for block in &program.blocks {
             if block.name == "main" {
-                // ::main → fn() -> i32, exported
+                // ::main -> fn() -> i32, exported
                 let mut sig = self.module.make_signature();
                 sig.returns.push(AbiParam::new(types::I32));
                 let func_id = self
@@ -186,12 +259,14 @@ impl Compiler {
                     .map_err(|e| CodegenError::new(format!("failed to declare main: {}", e)))?;
                 self.block_funcs.insert("main".to_string(), (func_id, 0));
             } else {
-                // Other blocks → fn(i64, i64, ...) -> i64, local
+                // Other blocks -> fn(ptr, ptr, ...) -> ptr, local
+                // Params and return are TorqValue* pointers
+                let ptr = self.module.target_config().pointer_type();
                 let mut sig = self.module.make_signature();
                 for _ in &block.params {
-                    sig.params.push(AbiParam::new(I64));
+                    sig.params.push(AbiParam::new(ptr));
                 }
-                sig.returns.push(AbiParam::new(I64));
+                sig.returns.push(AbiParam::new(ptr));
 
                 let func_name = format!("torq_block_{}", block.name);
                 let func_id = self
@@ -239,11 +314,12 @@ impl Compiler {
             sig.returns.push(AbiParam::new(types::I32));
             sig
         } else {
+            let ptr = self.module.target_config().pointer_type();
             let mut sig = self.module.make_signature();
             for _ in &block.params {
-                sig.params.push(AbiParam::new(I64));
+                sig.params.push(AbiParam::new(ptr));
             }
-            sig.returns.push(AbiParam::new(I64));
+            sig.returns.push(AbiParam::new(ptr));
             sig
         };
 
@@ -267,13 +343,12 @@ impl Compiler {
             for (i, param) in block.params.iter().enumerate() {
                 let cl_var = builder.declare_var(I64);
                 builder.def_var(cl_var, block_params[i]);
-                self.variables
-                    .insert(param.name.clone(), (cl_var, TorqType::I64));
+                self.variables.insert(param.name.clone(), cl_var);
             }
         }
 
         // Compile the body statements, tracking the last expression result
-        let mut last_result: Option<(Value, TorqType)> = None;
+        let mut last_result: Option<Value> = None;
         for stmt in &block.body {
             let result = self.compile_statement(stmt, rt, &mut builder)?;
             if result.is_some() {
@@ -289,11 +364,13 @@ impl Compiler {
                 builder.ins().return_(&[zero]);
             } else {
                 // Non-main blocks return the last expression value as i64
-                let ret_val = if let Some((val, _ty)) = last_result {
+                let ret_val = if let Some(val) = last_result {
                     val
                 } else {
-                    // No expression result — return 0
-                    builder.ins().iconst(I64, 0)
+                    // No expression result — return torq_null()
+                    let func_ref = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                    let inst = builder.ins().call(func_ref, &[]);
+                    builder.inst_results(inst)[0]
                 };
                 builder.ins().return_(&[ret_val]);
             }
@@ -320,13 +397,14 @@ impl Compiler {
         stmt: &Statement,
         rt: &RuntimeFuncs,
         builder: &mut FunctionBuilder,
-    ) -> Result<Option<(Value, TorqType)>, CodegenError> {
+    ) -> Result<Option<Value>, CodegenError> {
         match stmt {
             Statement::Expression(Expr::Call(call)) if call.name == "print" => {
                 // Direct print call: `print "hello"` or `print 42`
                 if let Some(arg) = call.args.first() {
-                    let (val, ty) = self.compile_expr(arg, rt, builder, None)?;
-                    self.emit_print(val, ty, rt, builder)?;
+                    let val = self.compile_expr(arg, rt, builder, None)?;
+                    let func_ref = self.module.declare_func_in_func(rt.torq_print, builder.func);
+                    builder.ins().call(func_ref, &[val]);
                 }
                 Ok(None)
             }
@@ -336,20 +414,16 @@ impl Compiler {
             }
             Statement::Assignment(assign) => {
                 // Compile the RHS expression
-                let (val, ty) = self.compile_expr(&assign.value, rt, builder, None)?;
+                let val = self.compile_expr(&assign.value, rt, builder, None)?;
 
-                if let Some(&(cl_var, _)) = self.variables.get(&assign.target.name) {
+                if let Some(&cl_var) = self.variables.get(&assign.target.name) {
                     // Variable already exists — reuse the Cranelift Variable
                     builder.def_var(cl_var, val);
-                    // Update the type in case it changed
-                    self.variables.insert(assign.target.name.clone(), (cl_var, ty));
                 } else {
                     // New variable — declare_var returns a fresh Variable
-                    let cl_type = torq_type_to_cranelift(ty, &self.module);
-                    let cl_var = builder.declare_var(cl_type);
+                    let cl_var = builder.declare_var(I64);
                     builder.def_var(cl_var, val);
-
-                    self.variables.insert(assign.target.name.clone(), (cl_var, ty));
+                    self.variables.insert(assign.target.name.clone(), cl_var);
                 }
 
                 Ok(None)
@@ -393,8 +467,16 @@ impl Compiler {
                 // Only support range(...) as iterable for Phase 4
                 let (start_val, end_val) = match &*each.iterable {
                     Expr::Call(call) if call.name == "range" && call.args.len() == 2 => {
-                        let (start, _) = self.compile_expr(&call.args[0], rt, builder, None)?;
-                        let (end, _) = self.compile_expr(&call.args[1], rt, builder, None)?;
+                        // Compile range args (they produce TorqValue*)
+                        let start_ptr = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let end_ptr = self.compile_expr(&call.args[1], rt, builder, None)?;
+                        // Extract raw i64 for efficient counter
+                        let as_int_fn = self.module.declare_func_in_func(rt.torq_as_int, builder.func);
+                        let inst = builder.ins().call(as_int_fn, &[start_ptr]);
+                        let start = builder.inst_results(inst)[0];
+                        let as_int_fn2 = self.module.declare_func_in_func(rt.torq_as_int, builder.func);
+                        let inst = builder.ins().call(as_int_fn2, &[end_ptr]);
+                        let end = builder.inst_results(inst)[0];
                         (start, end)
                     }
                     _ => return Err(CodegenError::new(
@@ -415,17 +497,21 @@ impl Compiler {
 
                 let counter = builder.block_params(loop_header)[0];
 
-                // Check: counter >= end → exit
+                // Check: counter >= end -> exit
                 let cmp = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, counter, end_val);
                 builder.ins().brif(cmp, exit_block, &[], body_block, &[]);
 
                 builder.switch_to_block(body_block);
                 builder.seal_block(body_block);
 
-                // Bind the iteration variable
+                // Box the counter as TorqValue* for the loop variable
+                let int_fn = self.module.declare_func_in_func(rt.torq_int, builder.func);
+                let inst = builder.ins().call(int_fn, &[counter]);
+                let boxed_counter = builder.inst_results(inst)[0];
+
                 let cl_var = builder.declare_var(types::I64);
-                builder.def_var(cl_var, counter);
-                self.variables.insert(each.binding.name.clone(), (cl_var, TorqType::I64));
+                builder.def_var(cl_var, boxed_counter);
+                self.variables.insert(each.binding.name.clone(), cl_var);
 
                 // Compile body
                 for stmt in &each.body {
@@ -464,21 +550,23 @@ impl Compiler {
         stages: &[Expr],
         rt: &RuntimeFuncs,
         builder: &mut FunctionBuilder,
-    ) -> Result<Option<(Value, TorqType)>, CodegenError> {
-        let mut pipe_val: Option<(Value, TorqType)> = None;
+    ) -> Result<Option<Value>, CodegenError> {
+        let mut pipe_val: Option<Value> = None;
 
         for stage in stages {
             match stage {
                 Expr::Call(call) if call.name == "print" => {
                     if call.args.is_empty() {
                         // `| print` — print the pipe value
-                        if let Some((val, ty)) = pipe_val {
-                            self.emit_print(val, ty, rt, builder)?;
+                        if let Some(val) = pipe_val {
+                            let func_ref = self.module.declare_func_in_func(rt.torq_print, builder.func);
+                            builder.ins().call(func_ref, &[val]);
                         }
                     } else {
                         // `| print <arg>` — print the explicit argument
-                        let (val, ty) = self.compile_expr(call.args.first().unwrap(), rt, builder, pipe_val)?;
-                        self.emit_print(val, ty, rt, builder)?;
+                        let val = self.compile_expr(call.args.first().unwrap(), rt, builder, pipe_val)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_print, builder.func);
+                        builder.ins().call(func_ref, &[val]);
                     }
                     pipe_val = None;
                 }
@@ -501,36 +589,44 @@ impl Compiler {
         expr: &Expr,
         rt: &RuntimeFuncs,
         builder: &mut FunctionBuilder,
-        pipe_value: Option<(Value, TorqType)>,
-    ) -> Result<(Value, TorqType), CodegenError> {
+        pipe_value: Option<Value>,
+    ) -> Result<Value, CodegenError> {
         match expr {
             Expr::Literal(Literal::Int(n, _)) => {
                 let val = builder.ins().iconst(I64, *n);
-                Ok((val, TorqType::I64))
+                let func_ref = self.module.declare_func_in_func(rt.torq_int, builder.func);
+                let inst = builder.ins().call(func_ref, &[val]);
+                Ok(builder.inst_results(inst)[0])
             }
             Expr::Literal(Literal::String(s, _)) => {
                 let pointer_type = self.module.target_config().pointer_type();
                 let data_id = create_string_data(&mut self.module, &mut self.str_counter, s)?;
                 let gv = self.module.declare_data_in_func(data_id, builder.func);
                 let ptr = builder.ins().global_value(pointer_type, gv);
-                Ok((ptr, TorqType::Ptr))
+                let func_ref = self.module.declare_func_in_func(rt.torq_str, builder.func);
+                let inst = builder.ins().call(func_ref, &[ptr]);
+                Ok(builder.inst_results(inst)[0])
             }
             Expr::Literal(Literal::Bool(b, _)) => {
                 let val = builder.ins().iconst(I64, if *b { 1 } else { 0 });
-                Ok((val, TorqType::Bool))
+                let func_ref = self.module.declare_func_in_func(rt.torq_bool, builder.func);
+                let inst = builder.ins().call(func_ref, &[val]);
+                Ok(builder.inst_results(inst)[0])
             }
             Expr::Literal(Literal::Null(_)) => {
-                let val = builder.ins().iconst(I64, 0);
-                Ok((val, TorqType::Void))
+                let func_ref = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(func_ref, &[]);
+                Ok(builder.inst_results(inst)[0])
             }
             Expr::Literal(Literal::Float(f, _)) => {
                 let val = builder.ins().f64const(*f);
-                Ok((val, TorqType::F64))
+                let func_ref = self.module.declare_func_in_func(rt.torq_float, builder.func);
+                let inst = builder.ins().call(func_ref, &[val]);
+                Ok(builder.inst_results(inst)[0])
             }
             Expr::Variable(var) => {
-                if let Some(&(cl_var, ty)) = self.variables.get(&var.name) {
-                    let val = builder.use_var(cl_var);
-                    Ok((val, ty))
+                if let Some(&cl_var) = self.variables.get(&var.name) {
+                    Ok(builder.use_var(cl_var))
                 } else {
                     Err(CodegenError::new(format!(
                         "undefined variable: ${}",
@@ -539,54 +635,41 @@ impl Compiler {
                 }
             }
             Expr::BinOp(binop) => {
-                let (left, _left_ty) = self.compile_expr(&binop.left, rt, builder, pipe_value)?;
-                let (right, _right_ty) = self.compile_expr(&binop.right, rt, builder, pipe_value)?;
+                let left = self.compile_expr(&binop.left, rt, builder, pipe_value)?;
+                let right = self.compile_expr(&binop.right, rt, builder, pipe_value)?;
 
-                let result = match binop.op {
-                    BinOpKind::Add => builder.ins().iadd(left, right),
-                    BinOpKind::Sub => builder.ins().isub(left, right),
-                    BinOpKind::Mul => builder.ins().imul(left, right),
-                    BinOpKind::Div => builder.ins().sdiv(left, right),
-                    BinOpKind::Mod => builder.ins().srem(left, right),
-                    BinOpKind::Gt => {
-                        let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, left, right);
-                        builder.ins().uextend(types::I64, cmp)
-                    }
-                    BinOpKind::Lt => {
-                        let cmp = builder.ins().icmp(IntCC::SignedLessThan, left, right);
-                        builder.ins().uextend(types::I64, cmp)
-                    }
-                    BinOpKind::GtEq => {
-                        let cmp = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, left, right);
-                        builder.ins().uextend(types::I64, cmp)
-                    }
-                    BinOpKind::LtEq => {
-                        let cmp = builder.ins().icmp(IntCC::SignedLessThanOrEqual, left, right);
-                        builder.ins().uextend(types::I64, cmp)
-                    }
-                    BinOpKind::Eq => {
-                        let cmp = builder.ins().icmp(IntCC::Equal, left, right);
-                        builder.ins().uextend(types::I64, cmp)
-                    }
-                    BinOpKind::NotEq => {
-                        let cmp = builder.ins().icmp(IntCC::NotEqual, left, right);
-                        builder.ins().uextend(types::I64, cmp)
-                    }
+                let func_id = match binop.op {
+                    BinOpKind::Add => rt.torq_add,
+                    BinOpKind::Sub => rt.torq_sub,
+                    BinOpKind::Mul => rt.torq_mul,
+                    BinOpKind::Div => rt.torq_div,
+                    BinOpKind::Mod => rt.torq_mod,
+                    BinOpKind::Gt => rt.torq_gt,
+                    BinOpKind::Lt => rt.torq_lt,
+                    BinOpKind::GtEq => rt.torq_gte,
+                    BinOpKind::LtEq => rt.torq_lte,
+                    BinOpKind::Eq => rt.torq_eq,
+                    BinOpKind::NotEq => rt.torq_neq,
                     BinOpKind::And => {
-                        // Logical AND: both operands are truthy (non-zero)
-                        builder.ins().band(left, right)
+                        // Logical AND: check truthiness of both, return bool
+                        let truthy_fn = self.module.declare_func_in_func(rt.torq_is_truthy, builder.func);
+                        let inst_a = builder.ins().call(truthy_fn, &[left]);
+                        let ta = builder.inst_results(inst_a)[0];
+                        let truthy_fn2 = self.module.declare_func_in_func(rt.torq_is_truthy, builder.func);
+                        let inst_b = builder.ins().call(truthy_fn2, &[right]);
+                        let tb = builder.inst_results(inst_b)[0];
+                        let result = builder.ins().band(ta, tb);
+                        let bool_fn = self.module.declare_func_in_func(rt.torq_bool, builder.func);
+                        let inst = builder.ins().call(bool_fn, &[result]);
+                        return Ok(builder.inst_results(inst)[0]);
                     }
                     BinOpKind::Pow => {
                         return Err(CodegenError::new("pow operator not yet supported"));
                     }
                 };
-
-                let result_ty = match binop.op {
-                    BinOpKind::Gt | BinOpKind::Lt | BinOpKind::GtEq
-                    | BinOpKind::LtEq | BinOpKind::Eq | BinOpKind::NotEq => TorqType::Bool,
-                    _ => TorqType::I64,
-                };
-                Ok((result, result_ty))
+                let func_ref = self.module.declare_func_in_func(func_id, builder.func);
+                let inst = builder.ins().call(func_ref, &[left, right]);
+                Ok(builder.inst_results(inst)[0])
             }
             Expr::Group(inner, _span) => {
                 self.compile_expr(inner, rt, builder, pipe_value)
@@ -594,11 +677,14 @@ impl Compiler {
             Expr::Call(call) if call.name == "print" => {
                 // print called as expression (e.g. inside a pipeline)
                 if let Some(arg) = call.args.first() {
-                    let (val, ty) = self.compile_expr(arg, rt, builder, None)?;
-                    self.emit_print(val, ty, rt, builder)?;
+                    let val = self.compile_expr(arg, rt, builder, None)?;
+                    let func_ref = self.module.declare_func_in_func(rt.torq_print, builder.func);
+                    builder.ins().call(func_ref, &[val]);
                 }
-                let zero = builder.ins().iconst(I64, 0);
-                Ok((zero, TorqType::Void))
+                // Return null as the expression result
+                let func_ref = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(func_ref, &[]);
+                Ok(builder.inst_results(inst)[0])
             }
             Expr::BlockCall(call) => {
                 // Look up the callee in the block_funcs map
@@ -613,7 +699,7 @@ impl Compiler {
                 // Compile each argument expression
                 let mut args = Vec::new();
                 for arg_expr in &call.args {
-                    let (val, _ty) = self.compile_expr(arg_expr, rt, builder, pipe_value)?;
+                    let val = self.compile_expr(arg_expr, rt, builder, pipe_value)?;
                     args.push(val);
                 }
 
@@ -621,11 +707,11 @@ impl Compiler {
                 let inst = builder.ins().call(func_ref, &args);
                 let result = builder.inst_results(inst)[0];
 
-                Ok((result, TorqType::I64))
+                Ok(result)
             }
             Expr::Match(m) => {
                 // Subject comes from pipe_value
-                let (subject, _) = pipe_value
+                let subject = pipe_value
                     .ok_or_else(|| CodegenError::new("match requires pipe input"))?;
 
                 // Create merge block with a block parameter for the result
@@ -638,23 +724,41 @@ impl Compiler {
                             let arm_block = builder.create_block();
                             let next_block = builder.create_block();
 
-                            let pat_val = builder.ins().iconst(types::I64, *n);
-                            let cmp = builder.ins().icmp(IntCC::Equal, subject, pat_val);
+                            // Create pattern value as TorqValue*
+                            let pat_raw = builder.ins().iconst(types::I64, *n);
+                            let int_fn = self.module.declare_func_in_func(rt.torq_int, builder.func);
+                            let inst = builder.ins().call(int_fn, &[pat_raw]);
+                            let pat_val = builder.inst_results(inst)[0];
+
+                            // Compare: torq_eq(subject, pattern) -> TorqValue* bool
+                            let eq_fn = self.module.declare_func_in_func(rt.torq_eq, builder.func);
+                            let inst = builder.ins().call(eq_fn, &[subject, pat_val]);
+                            let eq_result = builder.inst_results(inst)[0];
+
+                            // Extract truthy: torq_is_truthy(eq_result) -> raw i64
+                            let truthy_fn = self.module.declare_func_in_func(rt.torq_is_truthy, builder.func);
+                            let inst = builder.ins().call(truthy_fn, &[eq_result]);
+                            let cmp = builder.inst_results(inst)[0];
+
                             builder.ins().brif(cmp, arm_block, &[], next_block, &[]);
 
                             // Arm body
                             builder.switch_to_block(arm_block);
                             builder.seal_block(arm_block);
-                            let (result, _) = self.compile_expr(&arm.body, rt, builder, None)?;
-                            builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
+                            let result = self.compile_expr(&arm.body, rt, builder, None)?;
+                            if !block_is_terminated(builder) {
+                                builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
+                            }
 
                             // Next test
                             builder.switch_to_block(next_block);
                             builder.seal_block(next_block);
                         }
                         Pattern::Wildcard => {
-                            let (result, _) = self.compile_expr(&arm.body, rt, builder, None)?;
-                            builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
+                            let result = self.compile_expr(&arm.body, rt, builder, None)?;
+                            if !block_is_terminated(builder) {
+                                builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
+                            }
                         }
                         _ => {
                             return Err(CodegenError::new("unsupported match pattern in Phase 4"));
@@ -666,7 +770,7 @@ impl Compiler {
                 builder.switch_to_block(merge_block);
                 builder.seal_block(merge_block);
                 let result = builder.block_params(merge_block)[0];
-                Ok((result, TorqType::I64))
+                Ok(result)
             }
             Expr::Break(_) => {
                 let exit_block = self.loop_exit_stack.last()
@@ -678,49 +782,14 @@ impl Compiler {
                 builder.switch_to_block(dead_block);
                 builder.seal_block(dead_block);
 
-                Ok((builder.ins().iconst(types::I64, 0), TorqType::Void))
+                // Dummy value (never used -- unreachable code)
+                Ok(builder.ins().iconst(types::I64, 0))
             }
             _ => Err(CodegenError::new(format!(
                 "unsupported expression: {:?}",
                 expr
             ))),
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // emit_print — dispatch to the correct runtime print function
-    // -----------------------------------------------------------------------
-
-    fn emit_print(
-        &mut self,
-        value: Value,
-        ty: TorqType,
-        rt: &RuntimeFuncs,
-        builder: &mut FunctionBuilder,
-    ) -> Result<(), CodegenError> {
-        match ty {
-            TorqType::I64 => {
-                let func_ref = self.module.declare_func_in_func(rt.print_int, builder.func);
-                builder.ins().call(func_ref, &[value]);
-            }
-            TorqType::Ptr => {
-                let func_ref = self.module.declare_func_in_func(rt.print_str, builder.func);
-                builder.ins().call(func_ref, &[value]);
-            }
-            TorqType::Bool => {
-                let func_ref = self.module.declare_func_in_func(rt.print_bool, builder.func);
-                builder.ins().call(func_ref, &[value]);
-            }
-            TorqType::F64 => {
-                let func_ref = self.module.declare_func_in_func(rt.print_float, builder.func);
-                builder.ins().call(func_ref, &[value]);
-            }
-            TorqType::Void => {
-                let func_ref = self.module.declare_func_in_func(rt.print_null, builder.func);
-                builder.ins().call(func_ref, &[]);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -735,20 +804,6 @@ fn block_is_terminated(builder: &FunctionBuilder) -> bool {
         }
     }
     false
-}
-
-// ---------------------------------------------------------------------------
-// Helper: map TorqType to a Cranelift IR type
-// ---------------------------------------------------------------------------
-
-fn torq_type_to_cranelift(ty: TorqType, module: &ObjectModule) -> cranelift_codegen::ir::Type {
-    match ty {
-        TorqType::I64 => types::I64,
-        TorqType::Bool => types::I64,
-        TorqType::F64 => types::F64,
-        TorqType::Ptr => module.target_config().pointer_type(),
-        TorqType::Void => types::I64,
-    }
 }
 
 // ---------------------------------------------------------------------------

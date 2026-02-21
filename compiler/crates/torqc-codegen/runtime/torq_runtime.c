@@ -234,6 +234,13 @@ TorqValue* torq_mod(TorqValue* a, TorqValue* b) {
 
 TorqValue* torq_eq(TorqValue* a, TorqValue* b) {
     if (!a || !b) return torq_bool(a == b);
+    // Bool-int coercion: allow comparing bool and int values
+    if ((a->type == TV_BOOL && b->type == TV_INT) ||
+        (a->type == TV_INT && b->type == TV_BOOL)) {
+        int64_t va = (a->type == TV_BOOL) ? a->boolean : a->integer;
+        int64_t vb = (b->type == TV_BOOL) ? b->boolean : b->integer;
+        return torq_bool(va == vb);
+    }
     if (a->type != b->type) return torq_bool(0);
     switch (a->type) {
         case TV_INT:   return torq_bool(a->integer == b->integer);
@@ -249,6 +256,12 @@ TorqValue* torq_eq(TorqValue* a, TorqValue* b) {
 
 TorqValue* torq_neq(TorqValue* a, TorqValue* b) {
     if (!a || !b) return torq_bool(a != b);
+    if ((a->type == TV_BOOL && b->type == TV_INT) ||
+        (a->type == TV_INT && b->type == TV_BOOL)) {
+        int64_t va = (a->type == TV_BOOL) ? a->boolean : a->integer;
+        int64_t vb = (b->type == TV_BOOL) ? b->boolean : b->integer;
+        return torq_bool(va != vb);
+    }
     if (a->type != b->type) return torq_bool(1);
     switch (a->type) {
         case TV_INT:   return torq_bool(a->integer != b->integer);
@@ -308,10 +321,3 @@ TorqValue* torq_lte(TorqValue* a, TorqValue* b) {
     return torq_bool(0);
 }
 
-// ===== Legacy compatibility — remove after Task 3 codegen refactor =====
-
-void torq_print_int(int64_t n) { printf("%lld\n", (long long)n); }
-void torq_print_str(const char* s) { puts(s); }
-void torq_print_bool(int64_t b) { puts(b ? "true" : "false"); }
-void torq_print_float(double f) { printf("%g\n", f); }
-void torq_print_null(void) { puts("null"); }
