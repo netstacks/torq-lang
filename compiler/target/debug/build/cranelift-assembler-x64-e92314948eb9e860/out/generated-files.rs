@@ -1,0 +1,3 @@
+vec![
+  "/Users/cwdavis/torq-lang/compiler/target/debug/build/cranelift-assembler-x64-e92314948eb9e860/out/assembler.rs".into(),
+]

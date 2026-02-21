@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Lexer","SpannedIter"],"type":["Span"]};

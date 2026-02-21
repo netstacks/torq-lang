@@ -1,0 +1,1 @@
+/Users/cwdavis/torq-lang/compiler/target/debug/libtorqc_lexer.rlib: /Users/cwdavis/torq-lang/compiler/crates/torqc-lexer/src/lexer.rs /Users/cwdavis/torq-lang/compiler/crates/torqc-lexer/src/lib.rs /Users/cwdavis/torq-lang/compiler/crates/torqc-lexer/src/token.rs
