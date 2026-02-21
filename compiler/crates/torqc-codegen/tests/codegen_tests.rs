@@ -436,3 +436,43 @@ fn dict_len() {
     let output = compile_and_run(src);
     assert_eq!(output.trim(), "3");
 }
+
+// ---------------------------------------------------------------------------
+// String operation tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_upper() {
+    let output = compile_and_run("::main\n  \"hello world\" | upper | print\n");
+    assert_eq!(output.trim(), "HELLO WORLD");
+}
+
+#[test]
+fn string_lower() {
+    let output = compile_and_run("::main\n  \"HELLO\" | lower | print\n");
+    assert_eq!(output.trim(), "hello");
+}
+
+#[test]
+fn string_trim() {
+    let output = compile_and_run("::main\n  \"  hello  \" | trim | print\n");
+    assert_eq!(output.trim(), "hello");
+}
+
+#[test]
+fn string_len() {
+    let output = compile_and_run("::main\n  \"hello\" | len | print\n");
+    assert_eq!(output.trim(), "5");
+}
+
+#[test]
+fn string_contains() {
+    let output = compile_and_run("::main\n  \"hello world\" | contains \"world\" | print\n");
+    assert_eq!(output.trim(), "true");
+}
+
+#[test]
+fn string_split_and_join() {
+    let output = compile_and_run("::main\n  \"a,b,c\" | split \",\" | join \"-\" | print\n");
+    assert_eq!(output.trim(), "a-b-c");
+}

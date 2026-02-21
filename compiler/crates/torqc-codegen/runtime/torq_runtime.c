@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
 
 // ===== Type system =====
 
@@ -486,5 +487,159 @@ TorqValue* torq_len(TorqValue* v) {
         case TV_STR: return torq_int((int64_t)strlen(v->string));
         default: return torq_int(0);
     }
+}
+
+// ===== String operations =====
+
+TorqValue* torq_str_upper(TorqValue* v) {
+    if (!v || v->type != TV_STR) return v ? v : torq_str("");
+    char* s = strdup(v->string);
+    for (char* p = s; *p; p++) *p = toupper((unsigned char)*p);
+    TorqValue* result = torq_str(s);
+    free(s);
+    return result;
+}
+
+TorqValue* torq_str_lower(TorqValue* v) {
+    if (!v || v->type != TV_STR) return v ? v : torq_str("");
+    char* s = strdup(v->string);
+    for (char* p = s; *p; p++) *p = tolower((unsigned char)*p);
+    TorqValue* result = torq_str(s);
+    free(s);
+    return result;
+}
+
+TorqValue* torq_str_trim(TorqValue* v) {
+    if (!v || v->type != TV_STR) return v ? v : torq_str("");
+    const char* start = v->string;
+    while (*start && isspace((unsigned char)*start)) start++;
+    const char* end = v->string + strlen(v->string) - 1;
+    while (end > start && isspace((unsigned char)*end)) end--;
+    size_t len = end - start + 1;
+    char* s = (char*)malloc(len + 1);
+    memcpy(s, start, len);
+    s[len] = '\0';
+    TorqValue* result = torq_str(s);
+    free(s);
+    return result;
+}
+
+TorqValue* torq_str_contains(TorqValue* v, TorqValue* substr) {
+    if (!v || v->type != TV_STR || !substr || substr->type != TV_STR) return torq_bool(0);
+    return torq_bool(strstr(v->string, substr->string) != NULL);
+}
+
+TorqValue* torq_str_replace(TorqValue* v, TorqValue* old, TorqValue* new_) {
+    if (!v || v->type != TV_STR || !old || old->type != TV_STR || !new_ || new_->type != TV_STR)
+        return v ? v : torq_str("");
+    char* pos = strstr(v->string, old->string);
+    if (!pos) return torq_str(v->string);
+    size_t prefix_len = pos - v->string;
+    size_t old_len = strlen(old->string);
+    size_t new_len = strlen(new_->string);
+    size_t tail_len = strlen(pos + old_len);
+    char* s = (char*)malloc(prefix_len + new_len + tail_len + 1);
+    memcpy(s, v->string, prefix_len);
+    memcpy(s + prefix_len, new_->string, new_len);
+    memcpy(s + prefix_len + new_len, pos + old_len, tail_len + 1);
+    TorqValue* result = torq_str(s);
+    free(s);
+    return result;
+}
+
+TorqValue* torq_str_split(TorqValue* v, TorqValue* delim) {
+    TorqValue* arr = torq_array_new();
+    if (!v || v->type != TV_STR || !delim || delim->type != TV_STR) return arr;
+    char* input = strdup(v->string);
+    size_t delim_len = strlen(delim->string);
+    if (delim_len == 0) {
+        // Split into individual characters
+        for (char* p = input; *p; p++) {
+            char ch[2] = { *p, '\0' };
+            torq_array_push_mut(arr, torq_str(ch));
+        }
+        free(input);
+        return arr;
+    }
+    char* cur = input;
+    char* found;
+    while ((found = strstr(cur, delim->string)) != NULL) {
+        *found = '\0';
+        torq_array_push_mut(arr, torq_str(cur));
+        cur = found + delim_len;
+    }
+    torq_array_push_mut(arr, torq_str(cur));
+    free(input);
+    return arr;
+}
+
+TorqValue* torq_str_starts(TorqValue* v, TorqValue* prefix) {
+    if (!v || v->type != TV_STR || !prefix || prefix->type != TV_STR) return torq_bool(0);
+    size_t plen = strlen(prefix->string);
+    return torq_bool(strncmp(v->string, prefix->string, plen) == 0);
+}
+
+TorqValue* torq_str_ends(TorqValue* v, TorqValue* suffix) {
+    if (!v || v->type != TV_STR || !suffix || suffix->type != TV_STR) return torq_bool(0);
+    size_t slen = strlen(v->string);
+    size_t xlen = strlen(suffix->string);
+    if (xlen > slen) return torq_bool(0);
+    return torq_bool(strcmp(v->string + slen - xlen, suffix->string) == 0);
+}
+
+TorqValue* torq_str_slice(TorqValue* v, TorqValue* start, TorqValue* end_) {
+    if (!v || v->type != TV_STR) return torq_str("");
+    int64_t s = torq_as_int(start);
+    int64_t e = torq_as_int(end_);
+    int64_t len = (int64_t)strlen(v->string);
+    if (s < 0) s = 0;
+    if (e > len) e = len;
+    if (s >= e) return torq_str("");
+    size_t slice_len = e - s;
+    char* buf = (char*)malloc(slice_len + 1);
+    memcpy(buf, v->string + s, slice_len);
+    buf[slice_len] = '\0';
+    TorqValue* result = torq_str(buf);
+    free(buf);
+    return result;
+}
+
+TorqValue* torq_str_reverse(TorqValue* v) {
+    if (!v || v->type != TV_STR) return torq_str("");
+    size_t len = strlen(v->string);
+    char* s = (char*)malloc(len + 1);
+    for (size_t i = 0; i < len; i++) s[i] = v->string[len - 1 - i];
+    s[len] = '\0';
+    TorqValue* result = torq_str(s);
+    free(s);
+    return result;
+}
+
+TorqValue* torq_join(TorqValue* arr, TorqValue* delim) {
+    if (!arr || arr->type != TV_ARRAY || arr->array->length == 0) return torq_str("");
+    const char* d = (delim && delim->type == TV_STR) ? delim->string : "";
+    size_t dlen = strlen(d);
+    // Calculate total length
+    size_t total = 0;
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        TorqValue* elem = arr->array->elements[i];
+        if (elem && elem->type == TV_STR) total += strlen(elem->string);
+        if (i > 0) total += dlen;
+    }
+    char* buf = (char*)malloc(total + 1);
+    char* pos = buf;
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        if (i > 0) { memcpy(pos, d, dlen); pos += dlen; }
+        TorqValue* elem = arr->array->elements[i];
+        if (elem && elem->type == TV_STR) {
+            size_t elen = strlen(elem->string);
+            memcpy(pos, elem->string, elen);
+            pos += elen;
+        }
+    }
+    *pos = '\0';
+    TorqValue* result = torq_str(buf);
+    free(buf);
+    return result;
 }
 

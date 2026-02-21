@@ -80,6 +80,18 @@ struct RuntimeFuncs {
     torq_dict_get: FuncId,        // (ptr, ptr) -> ptr
     // Unified len
     torq_len: FuncId,             // (ptr) -> ptr
+    // String operations
+    torq_str_upper: FuncId,       // (ptr) -> ptr
+    torq_str_lower: FuncId,       // (ptr) -> ptr
+    torq_str_trim: FuncId,        // (ptr) -> ptr
+    torq_str_contains: FuncId,    // (ptr, ptr) -> ptr
+    torq_str_replace: FuncId,     // (ptr, ptr, ptr) -> ptr
+    torq_str_split: FuncId,       // (ptr, ptr) -> ptr
+    torq_str_starts: FuncId,      // (ptr, ptr) -> ptr
+    torq_str_ends: FuncId,        // (ptr, ptr) -> ptr
+    torq_str_slice: FuncId,       // (ptr, ptr, ptr) -> ptr
+    torq_str_reverse: FuncId,     // (ptr) -> ptr
+    torq_join: FuncId,            // (ptr, ptr) -> ptr
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +281,47 @@ impl Compiler {
             .declare_function("torq_len", Linkage::Import, &sig_ptr_to_ptr)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_len: {}", e)))?;
 
+        // Signature: (ptr, ptr, ptr) -> ptr  — for torq_str_replace, torq_str_slice
+        let mut sig_ppp_to_ptr = self.module.make_signature();
+        sig_ppp_to_ptr.params.push(AbiParam::new(ptr));
+        sig_ppp_to_ptr.params.push(AbiParam::new(ptr));
+        sig_ppp_to_ptr.params.push(AbiParam::new(ptr));
+        sig_ppp_to_ptr.returns.push(AbiParam::new(ptr));
+
+        let torq_str_upper = self.module
+            .declare_function("torq_str_upper", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_upper: {}", e)))?;
+        let torq_str_lower = self.module
+            .declare_function("torq_str_lower", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_lower: {}", e)))?;
+        let torq_str_trim = self.module
+            .declare_function("torq_str_trim", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_trim: {}", e)))?;
+        let torq_str_contains = self.module
+            .declare_function("torq_str_contains", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_contains: {}", e)))?;
+        let torq_str_replace = self.module
+            .declare_function("torq_str_replace", Linkage::Import, &sig_ppp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_replace: {}", e)))?;
+        let torq_str_split = self.module
+            .declare_function("torq_str_split", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_split: {}", e)))?;
+        let torq_str_starts = self.module
+            .declare_function("torq_str_starts", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_starts: {}", e)))?;
+        let torq_str_ends = self.module
+            .declare_function("torq_str_ends", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_ends: {}", e)))?;
+        let torq_str_slice = self.module
+            .declare_function("torq_str_slice", Linkage::Import, &sig_ppp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_slice: {}", e)))?;
+        let torq_str_reverse = self.module
+            .declare_function("torq_str_reverse", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_str_reverse: {}", e)))?;
+        let torq_join = self.module
+            .declare_function("torq_join", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_join: {}", e)))?;
+
         Ok(RuntimeFuncs {
             torq_int,
             torq_float,
@@ -299,6 +352,17 @@ impl Compiler {
             torq_dict_set_mut,
             torq_dict_get,
             torq_len,
+            torq_str_upper,
+            torq_str_lower,
+            torq_str_trim,
+            torq_str_contains,
+            torq_str_replace,
+            torq_str_split,
+            torq_str_starts,
+            torq_str_ends,
+            torq_str_slice,
+            torq_str_reverse,
+            torq_join,
         })
     }
 
@@ -655,6 +719,95 @@ impl Compiler {
                     if let Some(val) = pipe_val {
                         let func_ref = self.module.declare_func_in_func(rt.torq_array_last, builder.func);
                         let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // String operations — no extra args (pipe value only)
+                Expr::Call(call) if call.name == "upper" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_upper, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "lower" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_lower, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "trim" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_trim, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "reverse" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_reverse, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // String operations — one extra arg (pipe value + 1 arg)
+                Expr::Call(call) if call.name == "contains" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_contains, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "split" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_split, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "starts" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_starts, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "ends" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_ends, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "join" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_join, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // String operations — two extra args (pipe value + 2 args)
+                Expr::Call(call) if call.name == "replace" && call.args.len() == 2 => {
+                    if let Some(val) = pipe_val {
+                        let arg0 = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let arg1 = self.compile_expr(&call.args[1], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_replace, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg0, arg1]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "slice" && call.args.len() == 2 => {
+                    if let Some(val) = pipe_val {
+                        let arg0 = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let arg1 = self.compile_expr(&call.args[1], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_str_slice, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg0, arg1]);
                         pipe_val = Some(builder.inst_results(inst)[0]);
                     }
                 }
