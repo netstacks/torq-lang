@@ -111,6 +111,39 @@ struct RuntimeFuncs {
     torq_exit: FuncId,            // (ptr) -> void
     // JSON
     torq_to_json: FuncId,         // (ptr) -> ptr
+    torq_from_json: FuncId,       // (ptr) -> ptr
+    // Advanced array ops
+    torq_array_push: FuncId,      // (ptr, ptr) -> ptr
+    torq_array_pop: FuncId,       // (ptr) -> ptr
+    torq_array_shift: FuncId,     // (ptr) -> ptr
+    torq_array_at: FuncId,        // (ptr, ptr) -> ptr
+    torq_array_sort: FuncId,      // (ptr) -> ptr
+    torq_array_reverse: FuncId,   // (ptr) -> ptr
+    torq_array_sum: FuncId,       // (ptr) -> ptr
+    torq_array_unique: FuncId,    // (ptr) -> ptr
+    torq_array_flatten: FuncId,   // (ptr) -> ptr
+    torq_array_contains: FuncId,  // (ptr, ptr) -> ptr
+    torq_array_slice: FuncId,     // (ptr, ptr, ptr) -> ptr
+    torq_array_map_field: FuncId, // (ptr, ptr) -> ptr
+    torq_array_filter_field: FuncId, // (ptr, ptr) -> ptr
+    torq_array_empty: FuncId,     // (ptr) -> ptr
+    // Advanced dict ops
+    torq_dict_set: FuncId,        // (ptr, ptr, ptr) -> ptr
+    torq_dict_drop: FuncId,       // (ptr, ptr) -> ptr
+    torq_dict_merge: FuncId,      // (ptr, ptr) -> ptr
+    torq_dict_pick: FuncId,       // (ptr, ptr) -> ptr
+    torq_dict_omit: FuncId,       // (ptr, ptr) -> ptr
+    torq_dict_entries: FuncId,    // (ptr) -> ptr
+    torq_dict_empty: FuncId,      // (ptr) -> ptr
+    torq_dict_keys: FuncId,       // (ptr) -> ptr
+    torq_dict_values: FuncId,     // (ptr) -> ptr
+    torq_dict_has_tv: FuncId,     // (ptr, ptr) -> ptr  (TorqValue* key wrapper)
+    torq_dict_get_tv: FuncId,     // (ptr, ptr) -> ptr  (TorqValue* key wrapper)
+    // Power
+    torq_pow: FuncId,             // (ptr, ptr) -> ptr
+    // System
+    torq_sys_exec: FuncId,        // (ptr) -> ptr
+    torq_type_of: FuncId,         // (ptr) -> ptr
 }
 
 // ---------------------------------------------------------------------------
@@ -391,6 +424,101 @@ impl Compiler {
         let torq_to_json = self.module
             .declare_function("torq_to_json", Linkage::Import, &sig_ptr_to_ptr)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_to_json: {}", e)))?;
+        let torq_from_json = self.module
+            .declare_function("torq_from_json", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_from_json: {}", e)))?;
+
+        // Advanced array operations
+        let torq_array_push = self.module
+            .declare_function("torq_array_push", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_push: {}", e)))?;
+        let torq_array_pop = self.module
+            .declare_function("torq_array_pop", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_pop: {}", e)))?;
+        let torq_array_shift = self.module
+            .declare_function("torq_array_shift", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_shift: {}", e)))?;
+        let torq_array_at = self.module
+            .declare_function("torq_array_at", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_at: {}", e)))?;
+        let torq_array_sort = self.module
+            .declare_function("torq_array_sort", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_sort: {}", e)))?;
+        let torq_array_reverse = self.module
+            .declare_function("torq_array_reverse", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_reverse: {}", e)))?;
+        let torq_array_sum = self.module
+            .declare_function("torq_array_sum", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_sum: {}", e)))?;
+        let torq_array_unique = self.module
+            .declare_function("torq_array_unique", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_unique: {}", e)))?;
+        let torq_array_flatten = self.module
+            .declare_function("torq_array_flatten", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_flatten: {}", e)))?;
+        let torq_array_contains = self.module
+            .declare_function("torq_array_contains", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_contains: {}", e)))?;
+        let torq_array_slice = self.module
+            .declare_function("torq_array_slice", Linkage::Import, &sig_ppp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_slice: {}", e)))?;
+        let torq_array_map_field = self.module
+            .declare_function("torq_array_map_field", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_map_field: {}", e)))?;
+        let torq_array_filter_field = self.module
+            .declare_function("torq_array_filter_field", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_filter_field: {}", e)))?;
+        let torq_array_empty = self.module
+            .declare_function("torq_array_empty", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_array_empty: {}", e)))?;
+
+        // Advanced dict operations
+        let torq_dict_set = self.module
+            .declare_function("torq_dict_set", Linkage::Import, &sig_ppp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_set: {}", e)))?;
+        let torq_dict_drop = self.module
+            .declare_function("torq_dict_drop", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_drop: {}", e)))?;
+        let torq_dict_merge = self.module
+            .declare_function("torq_dict_merge", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_merge: {}", e)))?;
+        let torq_dict_pick = self.module
+            .declare_function("torq_dict_pick", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_pick: {}", e)))?;
+        let torq_dict_omit = self.module
+            .declare_function("torq_dict_omit", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_omit: {}", e)))?;
+        let torq_dict_entries = self.module
+            .declare_function("torq_dict_entries", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_entries: {}", e)))?;
+        let torq_dict_empty = self.module
+            .declare_function("torq_dict_empty", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_empty: {}", e)))?;
+        let torq_dict_keys = self.module
+            .declare_function("torq_dict_keys", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_keys: {}", e)))?;
+        let torq_dict_values = self.module
+            .declare_function("torq_dict_values", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_values: {}", e)))?;
+        let torq_dict_has_tv = self.module
+            .declare_function("torq_dict_has_tv", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_has_tv: {}", e)))?;
+        let torq_dict_get_tv = self.module
+            .declare_function("torq_dict_get_tv", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_get_tv: {}", e)))?;
+
+        // Power operator
+        let torq_pow = self.module
+            .declare_function("torq_pow", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_pow: {}", e)))?;
+
+        // System operations
+        let torq_sys_exec = self.module
+            .declare_function("torq_sys_exec", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_sys_exec: {}", e)))?;
+        let torq_type_of = self.module
+            .declare_function("torq_type_of", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_type_of: {}", e)))?;
 
         Ok(RuntimeFuncs {
             torq_int,
@@ -448,6 +576,35 @@ impl Compiler {
             torq_log,
             torq_exit,
             torq_to_json,
+            torq_from_json,
+            torq_array_push,
+            torq_array_pop,
+            torq_array_shift,
+            torq_array_at,
+            torq_array_sort,
+            torq_array_reverse,
+            torq_array_sum,
+            torq_array_unique,
+            torq_array_flatten,
+            torq_array_contains,
+            torq_array_slice,
+            torq_array_map_field,
+            torq_array_filter_field,
+            torq_array_empty,
+            torq_dict_set,
+            torq_dict_drop,
+            torq_dict_merge,
+            torq_dict_pick,
+            torq_dict_omit,
+            torq_dict_entries,
+            torq_dict_empty,
+            torq_dict_keys,
+            torq_dict_values,
+            torq_dict_has_tv,
+            torq_dict_get_tv,
+            torq_pow,
+            torq_sys_exec,
+            torq_type_of,
         })
     }
 
@@ -694,27 +851,39 @@ impl Compiler {
             }
             Statement::Each(each) => {
                 if !each.sequential {
-                    return Err(CodegenError::new("parallel each not supported in Phase 4"));
+                    return Err(CodegenError::new("parallel each not yet supported"));
                 }
 
-                // Only support range(...) as iterable for Phase 4
-                let (start_val, end_val) = match &*each.iterable {
-                    Expr::Call(call) if call.name == "range" && call.args.len() == 2 => {
-                        // Compile range args (they produce TorqValue*)
+                // Determine start/end values — range() or array iterable
+                let is_range = matches!(&*each.iterable, Expr::Call(call) if call.name == "range" && call.args.len() == 2);
+
+                // For array iteration: compile iterable, get length
+                // For range: extract start/end as raw i64
+                let (start_val, end_val, arr_val) = if is_range {
+                    if let Expr::Call(call) = &*each.iterable {
                         let start_ptr = self.compile_expr(&call.args[0], rt, builder, None)?;
                         let end_ptr = self.compile_expr(&call.args[1], rt, builder, None)?;
-                        // Extract raw i64 for efficient counter
                         let as_int_fn = self.module.declare_func_in_func(rt.torq_as_int, builder.func);
                         let inst = builder.ins().call(as_int_fn, &[start_ptr]);
                         let start = builder.inst_results(inst)[0];
                         let as_int_fn2 = self.module.declare_func_in_func(rt.torq_as_int, builder.func);
                         let inst = builder.ins().call(as_int_fn2, &[end_ptr]);
                         let end = builder.inst_results(inst)[0];
-                        (start, end)
+                        (start, end, None)
+                    } else {
+                        unreachable!()
                     }
-                    _ => return Err(CodegenError::new(
-                        "each sequential only supports range() iterable in Phase 4"
-                    )),
+                } else {
+                    // Array iterable: compile it, get its length
+                    let arr = self.compile_expr(&each.iterable, rt, builder, None)?;
+                    let len_fn = self.module.declare_func_in_func(rt.torq_len, builder.func);
+                    let inst = builder.ins().call(len_fn, &[arr]);
+                    let len_val = builder.inst_results(inst)[0];
+                    let as_int_fn = self.module.declare_func_in_func(rt.torq_as_int, builder.func);
+                    let inst = builder.ins().call(as_int_fn, &[len_val]);
+                    let end = builder.inst_results(inst)[0];
+                    let start = builder.ins().iconst(types::I64, 0);
+                    (start, end, Some(arr))
                 };
 
                 let loop_header = builder.create_block();
@@ -737,13 +906,24 @@ impl Compiler {
                 builder.switch_to_block(body_block);
                 builder.seal_block(body_block);
 
-                // Box the counter as TorqValue* for the loop variable
-                let int_fn = self.module.declare_func_in_func(rt.torq_int, builder.func);
-                let inst = builder.ins().call(int_fn, &[counter]);
-                let boxed_counter = builder.inst_results(inst)[0];
+                // Bind the loop variable
+                let binding_val = if let Some(arr) = arr_val {
+                    // Array iteration: get element at index
+                    let int_fn = self.module.declare_func_in_func(rt.torq_int, builder.func);
+                    let inst = builder.ins().call(int_fn, &[counter]);
+                    let idx = builder.inst_results(inst)[0];
+                    let get_fn = self.module.declare_func_in_func(rt.torq_array_get, builder.func);
+                    let inst = builder.ins().call(get_fn, &[arr, idx]);
+                    builder.inst_results(inst)[0]
+                } else {
+                    // Range iteration: box counter as TorqValue*
+                    let int_fn = self.module.declare_func_in_func(rt.torq_int, builder.func);
+                    let inst = builder.ins().call(int_fn, &[counter]);
+                    builder.inst_results(inst)[0]
+                };
 
                 let cl_var = builder.declare_var(types::I64);
-                builder.def_var(cl_var, boxed_counter);
+                builder.def_var(cl_var, binding_val);
                 self.variables.insert(each.binding.name.clone(), cl_var);
 
                 // Compile body
@@ -997,6 +1177,170 @@ impl Compiler {
                         pipe_val = Some(builder.inst_results(inst)[0]);
                     }
                 }
+                Expr::Call(call) if call.name == "from_json" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_from_json, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Array operations — no extra args
+                Expr::Call(call) if call.name == "sort" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_sort, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "sum" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_sum, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "unique" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_unique, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "flatten" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_flatten, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "pop" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_pop, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "shift" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_shift, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "empty?" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        // Works for both arrays and dicts
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_empty, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Array operations — one extra arg
+                Expr::Call(call) if call.name == "push" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_push, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "at" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_array_at, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Dict operations — no extra args
+                Expr::Call(call) if call.name == "keys" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_keys, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "values" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_values, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "entries" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_entries, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Dict operations — one extra arg
+                Expr::Call(call) if call.name == "has" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_has_tv, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "get" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_get_tv, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "drop" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_drop, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "merge" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_merge, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "pick" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_pick, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "omit" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_omit, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Dict set — two extra args
+                Expr::Call(call) if call.name == "set" && call.args.len() == 2 => {
+                    if let Some(val) = pipe_val {
+                        let arg0 = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let arg1 = self.compile_expr(&call.args[1], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_dict_set, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg0, arg1]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Type checking
+                Expr::Call(call) if call.name == "type_of" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_type_of, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
                 _ => {
                     let result = self.compile_expr(stage, rt, builder, pipe_val)?;
                     pipe_val = Some(result);
@@ -1090,9 +1434,7 @@ impl Compiler {
                         let inst = builder.ins().call(bool_fn, &[result]);
                         return Ok(builder.inst_results(inst)[0]);
                     }
-                    BinOpKind::Pow => {
-                        return Err(CodegenError::new("pow operator not yet supported"));
-                    }
+                    BinOpKind::Pow => rt.torq_pow,
                 };
                 let func_ref = self.module.declare_func_in_func(func_id, builder.func);
                 let inst = builder.ins().call(func_ref, &[left, right]);

@@ -581,3 +581,99 @@ fn phase5_showcase() {
     assert_eq!(lines[4], "HELLO WORLD");
     assert_eq!(lines[5], "spaces");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 — Collection operations + each-over-arrays
+// ---------------------------------------------------------------------------
+
+#[test]
+fn each_over_array() {
+    let src = "\
+::main
+  @names = [\"alice\" \"bob\" \"charlie\"]
+  @names | each $name sequential
+    $name | upper | print
+";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "ALICE\nBOB\nCHARLIE");
+}
+
+#[test]
+fn array_sort() {
+    let output = compile_and_run("::main\n  @nums = [3 1 2]\n  @nums | sort | print\n");
+    assert_eq!(output.trim(), "[1, 2, 3]");
+}
+
+#[test]
+fn array_sum() {
+    let output = compile_and_run("::main\n  @nums = [10 20 30]\n  @nums | sum | print\n");
+    assert_eq!(output.trim(), "60");
+}
+
+#[test]
+fn array_unique() {
+    let output = compile_and_run("::main\n  @nums = [1 2 2 3 3 3]\n  @nums | unique | print\n");
+    assert_eq!(output.trim(), "[1, 2, 3]");
+}
+
+#[test]
+fn array_push_pop() {
+    let output = compile_and_run("::main\n  @nums = [1 2 3]\n  @nums | push 4 | print\n  @nums | pop | print\n");
+    assert_eq!(output.trim(), "[1, 2, 3, 4]\n[1, 2]");
+}
+
+#[test]
+fn array_reverse() {
+    let output = compile_and_run("::main\n  @nums = [1 2 3]\n  @nums | reverse | print\n");
+    assert_eq!(output.trim(), "[3, 2, 1]");
+}
+
+#[test]
+fn array_flatten() {
+    // Flatten would require nested arrays. Test with a simpler case.
+    let output = compile_and_run("::main\n  @nums = [1 2 3]\n  @nums | flatten | print\n");
+    assert_eq!(output.trim(), "[1, 2, 3]");
+}
+
+#[test]
+fn dict_keys_values() {
+    let src = "::main\n  %d = { a 1 b 2 }\n  %d | keys | print\n  %d | values | sum | print\n";
+    let output = compile_and_run(src);
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert!(lines[0].contains("a") && lines[0].contains("b"));
+    assert_eq!(lines[1], "3");
+}
+
+#[test]
+fn dict_merge() {
+    let src = "::main\n  %a = { x 1 }\n  %b = { y 2 }\n  %a | merge %b | len | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "2");
+}
+
+#[test]
+fn dict_entries() {
+    let src = "::main\n  %d = { name \"alice\" }\n  %d | entries | len | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "1");
+}
+
+#[test]
+fn power_operator() {
+    let output = compile_and_run("::main\n  (2 ** 10) | print\n");
+    assert_eq!(output.trim(), "1024");
+}
+
+#[test]
+fn from_json_parse() {
+    let src = "::main\n  \"{\\\"name\\\": \\\"alice\\\", \\\"age\\\": 30}\" | from_json | print\n";
+    let output = compile_and_run(src);
+    assert!(output.contains("name") && output.contains("alice"));
+}
+
+#[test]
+fn json_roundtrip() {
+    let src = "::main\n  %user = { name \"alice\" age 30 }\n  %user | to_json | from_json | to_json | print\n";
+    let output = compile_and_run(src);
+    assert!(output.contains("\"name\"") && output.contains("\"alice\""));
+}

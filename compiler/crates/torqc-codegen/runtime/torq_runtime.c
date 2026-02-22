@@ -867,3 +867,467 @@ TorqValue* torq_to_json(TorqValue* v) {
     return result;
 }
 
+// ===== Advanced Array Operations =====
+
+TorqValue* torq_array_push(TorqValue* arr, TorqValue* val) {
+    if (!arr || arr->type != TV_ARRAY) return arr ? arr : torq_array_new();
+    // Create a new array with the element appended (non-mutating)
+    TorqValue* result = torq_array_new();
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        torq_array_push_mut(result, arr->array->elements[i]);
+    }
+    torq_array_push_mut(result, val);
+    return result;
+}
+
+TorqValue* torq_array_pop(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY || arr->array->length == 0) return arr ? arr : torq_array_new();
+    TorqValue* result = torq_array_new();
+    for (int64_t i = 0; i < arr->array->length - 1; i++) {
+        torq_array_push_mut(result, arr->array->elements[i]);
+    }
+    return result;
+}
+
+TorqValue* torq_array_shift(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY || arr->array->length == 0) return arr ? arr : torq_array_new();
+    TorqValue* result = torq_array_new();
+    for (int64_t i = 1; i < arr->array->length; i++) {
+        torq_array_push_mut(result, arr->array->elements[i]);
+    }
+    return result;
+}
+
+TorqValue* torq_array_at(TorqValue* arr, TorqValue* index) {
+    return torq_array_get(arr, index);
+}
+
+static int torq_compare_values(const void* a, const void* b) {
+    TorqValue* va = *(TorqValue**)a;
+    TorqValue* vb = *(TorqValue**)b;
+    if (!va || !vb) return 0;
+    if (va->type == TV_INT && vb->type == TV_INT) {
+        if (va->integer < vb->integer) return -1;
+        if (va->integer > vb->integer) return 1;
+        return 0;
+    }
+    if (va->type == TV_FLOAT && vb->type == TV_FLOAT) {
+        if (va->floating < vb->floating) return -1;
+        if (va->floating > vb->floating) return 1;
+        return 0;
+    }
+    if (va->type == TV_STR && vb->type == TV_STR) {
+        return strcmp(va->string, vb->string);
+    }
+    return 0;
+}
+
+TorqValue* torq_array_sort(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY) return arr ? arr : torq_array_new();
+    TorqValue* result = torq_array_new();
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        torq_array_push_mut(result, arr->array->elements[i]);
+    }
+    qsort(result->array->elements, result->array->length, sizeof(TorqValue*), torq_compare_values);
+    return result;
+}
+
+TorqValue* torq_array_reverse(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY) return arr ? arr : torq_array_new();
+    TorqValue* result = torq_array_new();
+    for (int64_t i = arr->array->length - 1; i >= 0; i--) {
+        torq_array_push_mut(result, arr->array->elements[i]);
+    }
+    return result;
+}
+
+TorqValue* torq_array_sum(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY) return torq_int(0);
+    int64_t isum = 0;
+    double fsum = 0.0;
+    int has_float = 0;
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        TorqValue* elem = arr->array->elements[i];
+        if (!elem) continue;
+        if (elem->type == TV_FLOAT) { has_float = 1; fsum += elem->floating; }
+        else if (elem->type == TV_INT) { isum += elem->integer; fsum += (double)elem->integer; }
+    }
+    if (has_float) return torq_float(fsum);
+    return torq_int(isum);
+}
+
+TorqValue* torq_array_unique(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY) return arr ? arr : torq_array_new();
+    TorqValue* result = torq_array_new();
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        TorqValue* elem = arr->array->elements[i];
+        int found = 0;
+        for (int64_t j = 0; j < result->array->length; j++) {
+            TorqValue* eq = torq_eq(elem, result->array->elements[j]);
+            if (eq && eq->type == TV_BOOL && eq->boolean) { found = 1; break; }
+        }
+        if (!found) torq_array_push_mut(result, elem);
+    }
+    return result;
+}
+
+TorqValue* torq_array_flatten(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY) return arr ? arr : torq_array_new();
+    TorqValue* result = torq_array_new();
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        TorqValue* elem = arr->array->elements[i];
+        if (elem && elem->type == TV_ARRAY) {
+            for (int64_t j = 0; j < elem->array->length; j++) {
+                torq_array_push_mut(result, elem->array->elements[j]);
+            }
+        } else {
+            torq_array_push_mut(result, elem);
+        }
+    }
+    return result;
+}
+
+TorqValue* torq_array_contains(TorqValue* arr, TorqValue* val) {
+    if (!arr || arr->type != TV_ARRAY) return torq_bool(0);
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        TorqValue* eq = torq_eq(arr->array->elements[i], val);
+        if (eq && eq->type == TV_BOOL && eq->boolean) return torq_bool(1);
+    }
+    return torq_bool(0);
+}
+
+TorqValue* torq_array_index_of(TorqValue* arr, TorqValue* val) {
+    if (!arr || arr->type != TV_ARRAY) return torq_int(-1);
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        TorqValue* eq = torq_eq(arr->array->elements[i], val);
+        if (eq && eq->type == TV_BOOL && eq->boolean) return torq_int(i);
+    }
+    return torq_int(-1);
+}
+
+TorqValue* torq_array_slice(TorqValue* arr, TorqValue* start, TorqValue* end_) {
+    if (!arr || arr->type != TV_ARRAY) return torq_array_new();
+    int64_t s = torq_as_int(start);
+    int64_t e = torq_as_int(end_);
+    int64_t len = arr->array->length;
+    if (s < 0) s = 0;
+    if (e > len) e = len;
+    if (s >= e) return torq_array_new();
+    TorqValue* result = torq_array_new();
+    for (int64_t i = s; i < e; i++) {
+        torq_array_push_mut(result, arr->array->elements[i]);
+    }
+    return result;
+}
+
+TorqValue* torq_array_map_field(TorqValue* arr, TorqValue* field) {
+    if (!arr || arr->type != TV_ARRAY || !field || field->type != TV_STR) return torq_array_new();
+    TorqValue* result = torq_array_new();
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        TorqValue* elem = arr->array->elements[i];
+        if (elem && elem->type == TV_DICT) {
+            torq_array_push_mut(result, torq_dict_get(elem, field->string));
+        } else {
+            torq_array_push_mut(result, torq_null());
+        }
+    }
+    return result;
+}
+
+TorqValue* torq_array_filter_field(TorqValue* arr, TorqValue* field) {
+    if (!arr || arr->type != TV_ARRAY || !field || field->type != TV_STR) return torq_array_new();
+    TorqValue* result = torq_array_new();
+    for (int64_t i = 0; i < arr->array->length; i++) {
+        TorqValue* elem = arr->array->elements[i];
+        if (elem && elem->type == TV_DICT) {
+            TorqValue* val = torq_dict_get(elem, field->string);
+            if (torq_is_truthy(val)) torq_array_push_mut(result, elem);
+        }
+    }
+    return result;
+}
+
+TorqValue* torq_array_empty(TorqValue* arr) {
+    if (!arr || arr->type != TV_ARRAY) return torq_bool(1);
+    return torq_bool(arr->array->length == 0);
+}
+
+// ===== Advanced Dict Operations =====
+
+TorqValue* torq_dict_set(TorqValue* d, TorqValue* key, TorqValue* val) {
+    if (!d || d->type != TV_DICT || !key || key->type != TV_STR) return d ? d : torq_dict_new();
+    // Create a copy with the key set
+    TorqValue* result = torq_dict_new();
+    TorqDict* src = d->dict;
+    for (int64_t i = 0; i < src->length; i++) {
+        torq_dict_set_mut(result, src->entries[i].key, src->entries[i].value);
+    }
+    torq_dict_set_mut(result, key->string, val);
+    return result;
+}
+
+TorqValue* torq_dict_drop(TorqValue* d, TorqValue* key) {
+    if (!d || d->type != TV_DICT || !key || key->type != TV_STR) return d ? d : torq_dict_new();
+    TorqValue* result = torq_dict_new();
+    TorqDict* src = d->dict;
+    for (int64_t i = 0; i < src->length; i++) {
+        if (strcmp(src->entries[i].key, key->string) != 0) {
+            torq_dict_set_mut(result, src->entries[i].key, src->entries[i].value);
+        }
+    }
+    return result;
+}
+
+TorqValue* torq_dict_merge(TorqValue* a, TorqValue* b) {
+    if (!a || a->type != TV_DICT) return b && b->type == TV_DICT ? b : torq_dict_new();
+    if (!b || b->type != TV_DICT) return a;
+    TorqValue* result = torq_dict_new();
+    TorqDict* da = a->dict;
+    for (int64_t i = 0; i < da->length; i++) {
+        torq_dict_set_mut(result, da->entries[i].key, da->entries[i].value);
+    }
+    TorqDict* db = b->dict;
+    for (int64_t i = 0; i < db->length; i++) {
+        torq_dict_set_mut(result, db->entries[i].key, db->entries[i].value);
+    }
+    return result;
+}
+
+TorqValue* torq_dict_pick(TorqValue* d, TorqValue* keys) {
+    if (!d || d->type != TV_DICT || !keys || keys->type != TV_ARRAY) return torq_dict_new();
+    TorqValue* result = torq_dict_new();
+    for (int64_t i = 0; i < keys->array->length; i++) {
+        TorqValue* k = keys->array->elements[i];
+        if (k && k->type == TV_STR) {
+            TorqDict* dict = d->dict;
+            for (int64_t j = 0; j < dict->length; j++) {
+                if (strcmp(dict->entries[j].key, k->string) == 0) {
+                    torq_dict_set_mut(result, dict->entries[j].key, dict->entries[j].value);
+                    break;
+                }
+            }
+        }
+    }
+    return result;
+}
+
+TorqValue* torq_dict_omit(TorqValue* d, TorqValue* keys) {
+    if (!d || d->type != TV_DICT) return torq_dict_new();
+    if (!keys || keys->type != TV_ARRAY) return d;
+    TorqValue* result = torq_dict_new();
+    TorqDict* dict = d->dict;
+    for (int64_t i = 0; i < dict->length; i++) {
+        int skip = 0;
+        for (int64_t j = 0; j < keys->array->length; j++) {
+            TorqValue* k = keys->array->elements[j];
+            if (k && k->type == TV_STR && strcmp(dict->entries[i].key, k->string) == 0) {
+                skip = 1;
+                break;
+            }
+        }
+        if (!skip) {
+            torq_dict_set_mut(result, dict->entries[i].key, dict->entries[i].value);
+        }
+    }
+    return result;
+}
+
+TorqValue* torq_dict_entries(TorqValue* d) {
+    TorqValue* arr = torq_array_new();
+    if (!d || d->type != TV_DICT) return arr;
+    TorqDict* dict = d->dict;
+    for (int64_t i = 0; i < dict->length; i++) {
+        TorqValue* pair = torq_array_new();
+        torq_array_push_mut(pair, torq_str(dict->entries[i].key));
+        torq_array_push_mut(pair, dict->entries[i].value);
+        torq_array_push_mut(arr, pair);
+    }
+    return arr;
+}
+
+TorqValue* torq_dict_empty(TorqValue* d) {
+    if (!d || d->type != TV_DICT) return torq_bool(1);
+    return torq_bool(d->dict->length == 0);
+}
+
+// ===== Power operator =====
+
+TorqValue* torq_pow(TorqValue* a, TorqValue* b) {
+    if (!a || !b) return torq_int(0);
+    double base = (a->type == TV_FLOAT) ? a->floating : (double)torq_as_int(a);
+    double exp = (b->type == TV_FLOAT) ? b->floating : (double)torq_as_int(b);
+    double result = pow(base, exp);
+    // If both inputs are int and result is integer-valued, return int
+    if (a->type == TV_INT && b->type == TV_INT && exp >= 0 && result == (double)(int64_t)result) {
+        return torq_int((int64_t)result);
+    }
+    return torq_float(result);
+}
+
+// ===== JSON Parsing =====
+
+// Forward declarations for JSON parser
+static TorqValue* json_parse_value(const char** p);
+static void json_skip_ws(const char** p);
+
+static void json_skip_ws(const char** p) {
+    while (**p == ' ' || **p == '\t' || **p == '\n' || **p == '\r') (*p)++;
+}
+
+static TorqValue* json_parse_string(const char** p) {
+    if (**p != '"') return torq_null();
+    (*p)++; // skip opening quote
+    size_t cap = 64;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    while (**p && **p != '"') {
+        if (**p == '\\') {
+            (*p)++;
+            switch (**p) {
+                case '"': buf[len++] = '"'; break;
+                case '\\': buf[len++] = '\\'; break;
+                case 'n': buf[len++] = '\n'; break;
+                case 't': buf[len++] = '\t'; break;
+                case 'r': buf[len++] = '\r'; break;
+                case '/': buf[len++] = '/'; break;
+                default: buf[len++] = **p; break;
+            }
+        } else {
+            buf[len++] = **p;
+        }
+        if (len >= cap - 1) { cap *= 2; buf = (char*)realloc(buf, cap); }
+        (*p)++;
+    }
+    if (**p == '"') (*p)++; // skip closing quote
+    buf[len] = '\0';
+    TorqValue* result = torq_str(buf);
+    free(buf);
+    return result;
+}
+
+static TorqValue* json_parse_number(const char** p) {
+    const char* start = *p;
+    int is_float = 0;
+    if (**p == '-') (*p)++;
+    while (**p >= '0' && **p <= '9') (*p)++;
+    if (**p == '.') { is_float = 1; (*p)++; while (**p >= '0' && **p <= '9') (*p)++; }
+    if (**p == 'e' || **p == 'E') { is_float = 1; (*p)++; if (**p == '+' || **p == '-') (*p)++; while (**p >= '0' && **p <= '9') (*p)++; }
+    if (is_float) return torq_float(strtod(start, NULL));
+    return torq_int(strtoll(start, NULL, 10));
+}
+
+static TorqValue* json_parse_array(const char** p) {
+    (*p)++; // skip '['
+    json_skip_ws(p);
+    TorqValue* arr = torq_array_new();
+    if (**p == ']') { (*p)++; return arr; }
+    while (1) {
+        json_skip_ws(p);
+        TorqValue* val = json_parse_value(p);
+        torq_array_push_mut(arr, val);
+        json_skip_ws(p);
+        if (**p == ',') { (*p)++; continue; }
+        if (**p == ']') { (*p)++; break; }
+        break; // malformed
+    }
+    return arr;
+}
+
+static TorqValue* json_parse_object(const char** p) {
+    (*p)++; // skip '{'
+    json_skip_ws(p);
+    TorqValue* dict = torq_dict_new();
+    if (**p == '}') { (*p)++; return dict; }
+    while (1) {
+        json_skip_ws(p);
+        if (**p != '"') break;
+        TorqValue* key = json_parse_string(p);
+        json_skip_ws(p);
+        if (**p == ':') (*p)++;
+        json_skip_ws(p);
+        TorqValue* val = json_parse_value(p);
+        if (key->type == TV_STR) {
+            torq_dict_set_mut(dict, key->string, val);
+        }
+        json_skip_ws(p);
+        if (**p == ',') { (*p)++; continue; }
+        if (**p == '}') { (*p)++; break; }
+        break; // malformed
+    }
+    return dict;
+}
+
+static TorqValue* json_parse_value(const char** p) {
+    json_skip_ws(p);
+    if (**p == '"') return json_parse_string(p);
+    if (**p == '{') return json_parse_object(p);
+    if (**p == '[') return json_parse_array(p);
+    if (**p == 't' && strncmp(*p, "true", 4) == 0) { *p += 4; return torq_bool(1); }
+    if (**p == 'f' && strncmp(*p, "false", 5) == 0) { *p += 5; return torq_bool(0); }
+    if (**p == 'n' && strncmp(*p, "null", 4) == 0) { *p += 4; return torq_null(); }
+    if (**p == '-' || (**p >= '0' && **p <= '9')) return json_parse_number(p);
+    return torq_null();
+}
+
+TorqValue* torq_from_json(TorqValue* v) {
+    if (!v || v->type != TV_STR) return torq_null();
+    const char* p = v->string;
+    return json_parse_value(&p);
+}
+
+// ===== System operations =====
+
+TorqValue* torq_sys_exec(TorqValue* cmd) {
+    if (!cmd || cmd->type != TV_STR) return torq_null();
+    FILE* fp = popen(cmd->string, "r");
+    if (!fp) return torq_null();
+    size_t cap = 1024;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    char tmp[256];
+    while (fgets(tmp, sizeof(tmp), fp)) {
+        size_t tlen = strlen(tmp);
+        while (len + tlen >= cap) { cap *= 2; buf = (char*)realloc(buf, cap); }
+        memcpy(buf + len, tmp, tlen);
+        len += tlen;
+    }
+    buf[len] = '\0';
+    pclose(fp);
+    TorqValue* result = torq_str(buf);
+    free(buf);
+    return result;
+}
+
+TorqValue* torq_sys_args(void) {
+    // Returns empty array — CLI arg handling requires main(argc, argv) support
+    return torq_array_new();
+}
+
+// ===== Type checking =====
+
+TorqValue* torq_type_of(TorqValue* v) {
+    if (!v) return torq_str("null");
+    switch (v->type) {
+        case TV_NULL: return torq_str("null");
+        case TV_INT: return torq_str("int");
+        case TV_FLOAT: return torq_str("float");
+        case TV_BOOL: return torq_str("bool");
+        case TV_STR: return torq_str("string");
+        case TV_ARRAY: return torq_str("array");
+        case TV_DICT: return torq_str("dict");
+    }
+    return torq_str("unknown");
+}
+
+// ===== TorqValue*-key wrappers for pipeline use =====
+// These accept TorqValue* keys instead of raw const char*
+
+TorqValue* torq_dict_get_tv(TorqValue* d, TorqValue* key) {
+    if (!key || key->type != TV_STR) return torq_null();
+    return torq_dict_get(d, key->string);
+}
+
+TorqValue* torq_dict_has_tv(TorqValue* d, TorqValue* key) {
+    if (!key || key->type != TV_STR) return torq_bool(0);
+    return torq_dict_has(d, key->string);
+}
