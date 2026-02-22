@@ -5,7 +5,7 @@ use torqc_lexer::lexer::Lexer;
 use torqc_parser::parser;
 
 #[derive(ClapParser)]
-#[command(name = "torqc", about = "TORQ language compiler")]
+#[command(name = "torqc", version = "0.1.0", about = "TORQ language compiler")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -62,6 +62,11 @@ enum Commands {
         #[arg(short, long)]
         filter: Option<String>,
     },
+    /// Initialize a new TORQ project
+    Init {
+        /// Project name (defaults to current directory name)
+        name: Option<String>,
+    },
 }
 
 fn main() {
@@ -96,6 +101,12 @@ fn main() {
         }
         Commands::Test { file, filter } => {
             if let Err(e) = run_test(&file, filter.as_deref()) {
+                eprintln!("error: {}", e);
+                process::exit(1);
+            }
+        }
+        Commands::Init { name } => {
+            if let Err(e) = run_init(name.as_deref()) {
                 eprintln!("error: {}", e);
                 process::exit(1);
             }
@@ -473,6 +484,55 @@ fn run_test(path: &str, filter: Option<&str>) -> Result<(), Box<dyn std::error::
     if failed > 0 {
         process::exit(1);
     }
+
+    Ok(())
+}
+
+fn run_init(name: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let project_name = match name {
+        Some(n) => n.to_string(),
+        None => {
+            std::env::current_dir()?
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        }
+    };
+
+    // Create torq.yaml
+    let yaml = format!(
+        "name: {}\nversion: 0.1.0\n\n# services:\n#   example:\n#     spec: https://api.example.com/openapi.json\n#     type: openapi\n#     auth: ${{API_KEY}}\n\n# environment:\n#   production:\n#     log_level: error\n#     port: 8080\n#   development:\n#     log_level: debug\n#     port: 3000\n",
+        project_name
+    );
+
+    if std::path::Path::new("torq.yaml").exists() {
+        return Err("torq.yaml already exists".into());
+    }
+
+    std::fs::write("torq.yaml", &yaml)?;
+    eprintln!("\u{2713} Created torq.yaml");
+
+    // Create src/main.torq
+    std::fs::create_dir_all("src")?;
+    if !std::path::Path::new("src/main.torq").exists() {
+        std::fs::write(
+            "src/main.torq",
+            format!("# {}\n\n::main\n  \"Hello from {}!\" | print\n", project_name, project_name),
+        )?;
+        eprintln!("\u{2713} Created src/main.torq");
+    }
+
+    // Create .gitignore for torq_modules
+    if !std::path::Path::new(".gitignore").exists() {
+        std::fs::write(".gitignore", "torq_modules/\n*.o\n")?;
+        eprintln!("\u{2713} Created .gitignore");
+    }
+
+    eprintln!("\n\u{2713} Initialized TORQ project '{}'", project_name);
+    eprintln!("\n  Build:  torqc build src/main.torq");
+    eprintln!("  Run:    torqc run src/main.torq");
+    eprintln!("  Test:   torqc test src/main.torq");
 
     Ok(())
 }
