@@ -1,0 +1,10 @@
+# Test file with an intentional failure
+
+::test_passes
+  assert_eq 1 1
+
+::test_fails
+  assert_eq 1 2
+
+::main
+  "test" | print

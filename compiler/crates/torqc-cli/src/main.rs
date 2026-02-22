@@ -54,6 +54,14 @@ enum Commands {
         #[arg(long)]
         verbose: bool,
     },
+    /// Run ::test_ blocks in a .torq file
+    Test {
+        /// Path to the .torq source file
+        file: String,
+        /// Run only tests matching this filter
+        #[arg(short, long)]
+        filter: Option<String>,
+    },
 }
 
 fn main() {
@@ -82,6 +90,12 @@ fn main() {
         Commands::Run { file, ai, no_ai, verbose } => {
             let mode = if no_ai { AiMode::Off } else if ai { AiMode::Full } else { AiMode::Default };
             if let Err(e) = run_run(&file, mode, verbose) {
+                eprintln!("error: {}", e);
+                process::exit(1);
+            }
+        }
+        Commands::Test { file, filter } => {
+            if let Err(e) = run_test(&file, filter.as_deref()) {
                 eprintln!("error: {}", e);
                 process::exit(1);
             }
@@ -308,6 +322,159 @@ fn try_compile_with_ai(
         )
         .into()),
     }
+}
+
+fn run_test(path: &str, filter: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read '{}': {}", path, e))?;
+
+    let tokens = Lexer::tokenize(&source, path)
+        .map_err(|e| format!("lex error: {}", e))?;
+
+    let program = parser::parse(tokens, path)
+        .map_err(|e| format!("parse error: {}", e))?;
+
+    // Find all ::test_ blocks
+    let test_blocks: Vec<&torqc_ast::ast::Block> = program
+        .blocks
+        .iter()
+        .filter(|b| b.name.starts_with("test_"))
+        .filter(|b| {
+            if let Some(f) = filter {
+                b.name.contains(f)
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    if test_blocks.is_empty() {
+        eprintln!("No ::test_ blocks found in {}", path);
+        return Ok(());
+    }
+
+    eprintln!("Running {} test(s) from {}\n", test_blocks.len(), path);
+
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut failures: Vec<String> = Vec::new();
+
+    let start_time = std::time::Instant::now();
+
+    for test_block in &test_blocks {
+        let test_name = &test_block.name;
+        let test_start = std::time::Instant::now();
+
+        // Create a program with this test block renamed to "main"
+        let mut test_program = torqc_ast::ast::Program {
+            blocks: program.blocks.clone(),
+        };
+
+        // Replace the test block with one named "main" (and remove existing main if any)
+        test_program.blocks.retain(|b| b.name != "main");
+        for block in &mut test_program.blocks {
+            if block.name == *test_name {
+                block.name = "main".to_string();
+            }
+        }
+
+        // Compile
+        let compiler = match torqc_codegen::codegen::Compiler::new() {
+            Ok(c) => c,
+            Err(e) => {
+                failed += 1;
+                let msg = format!("::{}  — compile init error: {}", test_name, e);
+                failures.push(msg.clone());
+                eprintln!("  \u{2717} {}", msg);
+                continue;
+            }
+        };
+
+        let object_bytes = match compiler.compile(&test_program) {
+            Ok(b) => b,
+            Err(e) => {
+                failed += 1;
+                let msg = format!("::{}  — compile error: {}", test_name, e);
+                failures.push(msg.clone());
+                eprintln!("  \u{2717} {}", msg);
+                continue;
+            }
+        };
+
+        // Link to temp file
+        let temp = std::env::temp_dir().join(format!(
+            "torq_test_{}_{}", test_name, std::process::id()
+        ));
+
+        if let Err(e) = torqc_codegen::linker::link(&object_bytes, &temp) {
+            failed += 1;
+            let msg = format!("::{}  — link error: {}", test_name, e);
+            failures.push(msg.clone());
+            eprintln!("  \u{2717} {}", msg);
+            continue;
+        }
+
+        // Run
+        let output = std::process::Command::new(&temp)
+            .output();
+
+        let _ = std::fs::remove_file(&temp);
+
+        let elapsed = test_start.elapsed();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                passed += 1;
+                eprintln!("  \u{2713} ::{} ({:.0?})", test_name, elapsed);
+            }
+            Ok(out) => {
+                failed += 1;
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let detail = if !stderr.is_empty() {
+                    stderr.trim().to_string()
+                } else if !stdout.is_empty() {
+                    stdout.trim().to_string()
+                } else {
+                    format!("exit code {}", out.status.code().unwrap_or(-1))
+                };
+                let msg = format!("::{} — {}", test_name, detail);
+                failures.push(msg);
+                eprintln!("  \u{2717} ::{} ({:.0?})", test_name, elapsed);
+            }
+            Err(e) => {
+                failed += 1;
+                let msg = format!("::{} — execution error: {}", test_name, e);
+                failures.push(msg);
+                eprintln!("  \u{2717} ::{} ({:.0?})", test_name, elapsed);
+            }
+        }
+    }
+
+    let total_elapsed = start_time.elapsed();
+    eprintln!();
+
+    if !failures.is_empty() {
+        eprintln!("Failures:");
+        for f in &failures {
+            eprintln!("  {}", f);
+        }
+        eprintln!();
+    }
+
+    eprintln!(
+        "{}/{} passed ({} failed) in {:.2?}",
+        passed,
+        passed + failed,
+        failed,
+        total_elapsed
+    );
+
+    if failed > 0 {
+        process::exit(1);
+    }
+
+    Ok(())
 }
 
 fn run_parse(path: &str) -> Result<(), Box<dyn std::error::Error>> {

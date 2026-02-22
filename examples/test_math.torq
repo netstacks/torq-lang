@@ -1,0 +1,19 @@
+# Test file for the torqc test framework
+
+::test_addition
+  $result = (2 + 3)
+  assert_eq $result 5
+
+::test_subtraction
+  $result = (10 - 4)
+  assert_eq $result 6
+
+::test_multiplication
+  $result = (3 * 7)
+  assert_eq $result 21
+
+::test_string_upper
+  "hello" | upper | assert_eq "HELLO"
+
+::main
+  "Math tests should be run with: torqc test" | print
