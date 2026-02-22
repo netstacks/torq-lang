@@ -9,5 +9,6 @@ torqc-lexer = { path = "../torqc-lexer" }
 torqc-parser = { path = "../torqc-parser" }
 torqc-semantic = { path = "../torqc-semantic" }
 torqc-codegen = { path = "../torqc-codegen" }
+torqc-ai = { path = "../torqc-ai" }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
