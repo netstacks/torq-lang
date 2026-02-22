@@ -149,6 +149,32 @@ struct RuntimeFuncs {
     // System
     torq_sys_exec: FuncId,        // (ptr) -> ptr
     torq_type_of: FuncId,         // (ptr) -> ptr
+    // Time
+    torq_time_now: FuncId,        // () -> ptr
+    torq_time_unix: FuncId,       // () -> ptr
+    torq_time_format: FuncId,     // (ptr, ptr) -> ptr
+    torq_time_parse: FuncId,      // (ptr, ptr) -> ptr
+    torq_time_diff: FuncId,       // (ptr, ptr) -> ptr
+    torq_time_add: FuncId,        // (ptr, ptr) -> ptr
+    torq_time_sleep: FuncId,      // (ptr) -> void
+    // HTTP
+    torq_http_get: FuncId,        // (ptr) -> ptr
+    torq_http_post: FuncId,       // (ptr, ptr) -> ptr
+    torq_http_put: FuncId,        // (ptr, ptr) -> ptr
+    torq_http_delete: FuncId,     // (ptr) -> ptr
+    // Crypto
+    torq_crypto_hash: FuncId,     // (ptr, ptr) -> ptr
+    torq_crypto_uuid: FuncId,     // () -> ptr
+    // Logging
+    torq_log_info: FuncId,        // (ptr) -> void
+    torq_log_warn: FuncId,        // (ptr) -> void
+    torq_log_err: FuncId,         // (ptr) -> void
+    torq_log_debug: FuncId,       // (ptr) -> void
+    // Math (additional)
+    torq_math_random: FuncId,     // () -> ptr
+    // Assert
+    torq_assert: FuncId,          // (ptr, ptr) -> void
+    torq_assert_eq: FuncId,       // (ptr, ptr) -> void
 }
 
 // ---------------------------------------------------------------------------
@@ -550,6 +576,78 @@ impl Compiler {
             .declare_function("torq_type_of", Linkage::Import, &sig_ptr_to_ptr)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_type_of: {}", e)))?;
 
+        // Time functions
+        let torq_time_now = self.module
+            .declare_function("torq_time_now", Linkage::Import, &sig_void_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_time_now: {}", e)))?;
+        let torq_time_unix = self.module
+            .declare_function("torq_time_unix", Linkage::Import, &sig_void_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_time_unix: {}", e)))?;
+        let torq_time_format = self.module
+            .declare_function("torq_time_format", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_time_format: {}", e)))?;
+        let torq_time_parse = self.module
+            .declare_function("torq_time_parse", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_time_parse: {}", e)))?;
+        let torq_time_diff = self.module
+            .declare_function("torq_time_diff", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_time_diff: {}", e)))?;
+        let torq_time_add = self.module
+            .declare_function("torq_time_add", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_time_add: {}", e)))?;
+        let torq_time_sleep = self.module
+            .declare_function("torq_time_sleep", Linkage::Import, &sig_ptr_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_time_sleep: {}", e)))?;
+
+        // HTTP functions
+        let torq_http_get = self.module
+            .declare_function("torq_http_get", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_http_get: {}", e)))?;
+        let torq_http_post = self.module
+            .declare_function("torq_http_post", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_http_post: {}", e)))?;
+        let torq_http_put = self.module
+            .declare_function("torq_http_put", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_http_put: {}", e)))?;
+        let torq_http_delete = self.module
+            .declare_function("torq_http_delete", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_http_delete: {}", e)))?;
+
+        // Crypto functions
+        let torq_crypto_hash = self.module
+            .declare_function("torq_crypto_hash", Linkage::Import, &sig_pp_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_crypto_hash: {}", e)))?;
+        let torq_crypto_uuid = self.module
+            .declare_function("torq_crypto_uuid", Linkage::Import, &sig_void_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_crypto_uuid: {}", e)))?;
+
+        // Logging functions
+        let torq_log_info = self.module
+            .declare_function("torq_log_info", Linkage::Import, &sig_ptr_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_log_info: {}", e)))?;
+        let torq_log_warn = self.module
+            .declare_function("torq_log_warn", Linkage::Import, &sig_ptr_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_log_warn: {}", e)))?;
+        let torq_log_err = self.module
+            .declare_function("torq_log_err", Linkage::Import, &sig_ptr_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_log_err: {}", e)))?;
+        let torq_log_debug = self.module
+            .declare_function("torq_log_debug", Linkage::Import, &sig_ptr_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_log_debug: {}", e)))?;
+
+        // Math random
+        let torq_math_random = self.module
+            .declare_function("torq_math_random", Linkage::Import, &sig_void_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_math_random: {}", e)))?;
+
+        // Assert functions
+        let torq_assert = self.module
+            .declare_function("torq_assert", Linkage::Import, &sig_pp_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_assert: {}", e)))?;
+        let torq_assert_eq = self.module
+            .declare_function("torq_assert_eq", Linkage::Import, &sig_pp_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_assert_eq: {}", e)))?;
+
         Ok(RuntimeFuncs {
             torq_int,
             torq_float,
@@ -638,6 +736,26 @@ impl Compiler {
             torq_pow,
             torq_sys_exec,
             torq_type_of,
+            torq_time_now,
+            torq_time_unix,
+            torq_time_format,
+            torq_time_parse,
+            torq_time_diff,
+            torq_time_add,
+            torq_time_sleep,
+            torq_http_get,
+            torq_http_post,
+            torq_http_put,
+            torq_http_delete,
+            torq_crypto_hash,
+            torq_crypto_uuid,
+            torq_log_info,
+            torq_log_warn,
+            torq_log_err,
+            torq_log_debug,
+            torq_math_random,
+            torq_assert,
+            torq_assert_eq,
         })
     }
 
@@ -1469,6 +1587,155 @@ impl Compiler {
                         pipe_val = Some(builder.inst_results(inst)[0]);
                     }
                 }
+                // Time operations — no args (produce value from nothing)
+                Expr::Call(call) if call.name == "time_now" && call.args.is_empty() => {
+                    let func_ref = self.module.declare_func_in_func(rt.torq_time_now, builder.func);
+                    let inst = builder.ins().call(func_ref, &[]);
+                    pipe_val = Some(builder.inst_results(inst)[0]);
+                }
+                Expr::Call(call) if call.name == "time_unix" && call.args.is_empty() => {
+                    let func_ref = self.module.declare_func_in_func(rt.torq_time_unix, builder.func);
+                    let inst = builder.ins().call(func_ref, &[]);
+                    pipe_val = Some(builder.inst_results(inst)[0]);
+                }
+                // Time operations — one extra arg (pipe value + 1 arg)
+                Expr::Call(call) if call.name == "time_format" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_time_format, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "time_parse" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_time_parse, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "time_diff" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_time_diff, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "time_add" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_time_add, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Time sleep — consumes pipe value, returns nothing
+                Expr::Call(call) if call.name == "time_sleep" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_time_sleep, builder.func);
+                        builder.ins().call(func_ref, &[val]);
+                    }
+                    pipe_val = None;
+                }
+                // HTTP operations
+                Expr::Call(call) if call.name == "http_get" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_http_get, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "http_post" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_http_post, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "http_put" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_http_put, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val, arg]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "http_delete" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_http_delete, builder.func);
+                        let inst = builder.ins().call(func_ref, &[val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                // Crypto operations
+                Expr::Call(call) if call.name == "crypto_hash" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let algo = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_crypto_hash, builder.func);
+                        let inst = builder.ins().call(func_ref, &[algo, val]);
+                        pipe_val = Some(builder.inst_results(inst)[0]);
+                    }
+                }
+                Expr::Call(call) if call.name == "crypto_uuid" && call.args.is_empty() => {
+                    let func_ref = self.module.declare_func_in_func(rt.torq_crypto_uuid, builder.func);
+                    let inst = builder.ins().call(func_ref, &[]);
+                    pipe_val = Some(builder.inst_results(inst)[0]);
+                }
+                // Logging operations — consume pipe value
+                Expr::Call(call) if call.name == "log_info" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_log_info, builder.func);
+                        builder.ins().call(func_ref, &[val]);
+                    }
+                    pipe_val = None;
+                }
+                Expr::Call(call) if call.name == "log_warn" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_log_warn, builder.func);
+                        builder.ins().call(func_ref, &[val]);
+                    }
+                    pipe_val = None;
+                }
+                Expr::Call(call) if call.name == "log_err" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_log_err, builder.func);
+                        builder.ins().call(func_ref, &[val]);
+                    }
+                    pipe_val = None;
+                }
+                Expr::Call(call) if call.name == "log_debug" && call.args.is_empty() => {
+                    if let Some(val) = pipe_val {
+                        let func_ref = self.module.declare_func_in_func(rt.torq_log_debug, builder.func);
+                        builder.ins().call(func_ref, &[val]);
+                    }
+                    pipe_val = None;
+                }
+                // Math random — no args, produces value
+                Expr::Call(call) if call.name == "math_random" && call.args.is_empty() => {
+                    let func_ref = self.module.declare_func_in_func(rt.torq_math_random, builder.func);
+                    let inst = builder.ins().call(func_ref, &[]);
+                    pipe_val = Some(builder.inst_results(inst)[0]);
+                }
+                // Assert operations — consume pipe value + 1 arg
+                Expr::Call(call) if call.name == "assert" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_assert, builder.func);
+                        builder.ins().call(func_ref, &[val, arg]);
+                    }
+                    pipe_val = None;
+                }
+                Expr::Call(call) if call.name == "assert_eq" && call.args.len() == 1 => {
+                    if let Some(val) = pipe_val {
+                        let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                        let func_ref = self.module.declare_func_in_func(rt.torq_assert_eq, builder.func);
+                        builder.ins().call(func_ref, &[val, arg]);
+                    }
+                    pipe_val = None;
+                }
                 _ => {
                     let result = self.compile_expr(stage, rt, builder, pipe_val)?;
                     pipe_val = Some(result);
@@ -1845,6 +2112,183 @@ impl Compiler {
                 };
                 let func_ref = self.module.declare_func_in_func(rt.torq_log, builder.func);
                 builder.ins().call(func_ref, &[val]);
+                let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(null_fn, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            // Time functions as expressions
+            Expr::Call(call) if call.name == "time_now" && call.args.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(rt.torq_time_now, builder.func);
+                let inst = builder.ins().call(func_ref, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "time_unix" && call.args.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(rt.torq_time_unix, builder.func);
+                let inst = builder.ins().call(func_ref, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "time_format" && call.args.len() == 2 => {
+                let arg0 = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let arg1 = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_time_format, builder.func);
+                let inst = builder.ins().call(func_ref, &[arg0, arg1]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "time_parse" && call.args.len() == 2 => {
+                let arg0 = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let arg1 = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_time_parse, builder.func);
+                let inst = builder.ins().call(func_ref, &[arg0, arg1]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "time_diff" && call.args.len() == 2 => {
+                let arg0 = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let arg1 = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_time_diff, builder.func);
+                let inst = builder.ins().call(func_ref, &[arg0, arg1]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "time_add" && call.args.len() == 2 => {
+                let arg0 = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let arg1 = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_time_add, builder.func);
+                let inst = builder.ins().call(func_ref, &[arg0, arg1]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "time_sleep" && call.args.len() == 1 => {
+                let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_time_sleep, builder.func);
+                builder.ins().call(func_ref, &[arg]);
+                let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(null_fn, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            // HTTP functions as expressions
+            Expr::Call(call) if call.name == "http_get" && call.args.len() == 1 => {
+                let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_http_get, builder.func);
+                let inst = builder.ins().call(func_ref, &[arg]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "http_post" && call.args.len() == 2 => {
+                let url = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let body = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_http_post, builder.func);
+                let inst = builder.ins().call(func_ref, &[url, body]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "http_put" && call.args.len() == 2 => {
+                let url = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let body = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_http_put, builder.func);
+                let inst = builder.ins().call(func_ref, &[url, body]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "http_delete" && call.args.len() == 1 => {
+                let arg = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_http_delete, builder.func);
+                let inst = builder.ins().call(func_ref, &[arg]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            // Crypto functions as expressions
+            Expr::Call(call) if call.name == "crypto_hash" && call.args.len() == 2 => {
+                let data = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let algo = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_crypto_hash, builder.func);
+                let inst = builder.ins().call(func_ref, &[data, algo]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "crypto_uuid" && call.args.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(rt.torq_crypto_uuid, builder.func);
+                let inst = builder.ins().call(func_ref, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            // Logging functions as expressions
+            Expr::Call(call) if call.name == "log_info" => {
+                let val = if let Some(arg) = call.args.first() {
+                    self.compile_expr(arg, rt, builder, None)?
+                } else if let Some(pv) = pipe_value {
+                    pv
+                } else {
+                    let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                    let inst = builder.ins().call(null_fn, &[]);
+                    builder.inst_results(inst)[0]
+                };
+                let func_ref = self.module.declare_func_in_func(rt.torq_log_info, builder.func);
+                builder.ins().call(func_ref, &[val]);
+                let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(null_fn, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "log_warn" => {
+                let val = if let Some(arg) = call.args.first() {
+                    self.compile_expr(arg, rt, builder, None)?
+                } else if let Some(pv) = pipe_value {
+                    pv
+                } else {
+                    let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                    let inst = builder.ins().call(null_fn, &[]);
+                    builder.inst_results(inst)[0]
+                };
+                let func_ref = self.module.declare_func_in_func(rt.torq_log_warn, builder.func);
+                builder.ins().call(func_ref, &[val]);
+                let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(null_fn, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "log_err" => {
+                let val = if let Some(arg) = call.args.first() {
+                    self.compile_expr(arg, rt, builder, None)?
+                } else if let Some(pv) = pipe_value {
+                    pv
+                } else {
+                    let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                    let inst = builder.ins().call(null_fn, &[]);
+                    builder.inst_results(inst)[0]
+                };
+                let func_ref = self.module.declare_func_in_func(rt.torq_log_err, builder.func);
+                builder.ins().call(func_ref, &[val]);
+                let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(null_fn, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "log_debug" => {
+                let val = if let Some(arg) = call.args.first() {
+                    self.compile_expr(arg, rt, builder, None)?
+                } else if let Some(pv) = pipe_value {
+                    pv
+                } else {
+                    let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                    let inst = builder.ins().call(null_fn, &[]);
+                    builder.inst_results(inst)[0]
+                };
+                let func_ref = self.module.declare_func_in_func(rt.torq_log_debug, builder.func);
+                builder.ins().call(func_ref, &[val]);
+                let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(null_fn, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            // Math random as expression
+            Expr::Call(call) if call.name == "math_random" && call.args.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(rt.torq_math_random, builder.func);
+                let inst = builder.ins().call(func_ref, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            // Assert functions as expressions
+            Expr::Call(call) if call.name == "assert" && call.args.len() == 2 => {
+                let val = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let msg = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_assert, builder.func);
+                builder.ins().call(func_ref, &[val, msg]);
+                let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                let inst = builder.ins().call(null_fn, &[]);
+                Ok(builder.inst_results(inst)[0])
+            }
+            Expr::Call(call) if call.name == "assert_eq" && call.args.len() == 2 => {
+                let expected = self.compile_expr(&call.args[0], rt, builder, None)?;
+                let actual = self.compile_expr(&call.args[1], rt, builder, None)?;
+                let func_ref = self.module.declare_func_in_func(rt.torq_assert_eq, builder.func);
+                builder.ins().call(func_ref, &[expected, actual]);
                 let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
                 let inst = builder.ins().call(null_fn, &[]);
                 Ok(builder.inst_results(inst)[0])

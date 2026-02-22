@@ -5,6 +5,10 @@
 #include <math.h>
 #include <ctype.h>
 #include <pthread.h>
+#include <time.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/time.h>
 
 // ===== Type system =====
 
@@ -1434,4 +1438,332 @@ TorqValue* torq_shared_add(TorqShared* s, TorqValue* v) {
     TorqValue* result = s->value;
     pthread_mutex_unlock(&s->mutex);
     return result;
+}
+
+// ===== Time functions =====
+
+TorqValue* torq_time_now(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    double ts = (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
+    return torq_float(ts);
+}
+
+TorqValue* torq_time_unix(void) {
+    return torq_int((int64_t)time(NULL));
+}
+
+TorqValue* torq_time_format(TorqValue* ts, TorqValue* fmt) {
+    time_t t;
+    if (ts && ts->type == TV_FLOAT) t = (time_t)ts->floating;
+    else if (ts && ts->type == TV_INT) t = (time_t)ts->integer;
+    else t = time(NULL);
+
+    const char* format = (fmt && fmt->type == TV_STR) ? fmt->string : "%Y-%m-%d %H:%M:%S";
+    char buf[256];
+    struct tm* tm_info = localtime(&t);
+    strftime(buf, sizeof(buf), format, tm_info);
+    return torq_str(buf);
+}
+
+TorqValue* torq_time_parse(TorqValue* str_val, TorqValue* fmt) {
+    if (!str_val || str_val->type != TV_STR) return torq_null();
+    const char* format = (fmt && fmt->type == TV_STR) ? fmt->string : "%Y-%m-%d %H:%M:%S";
+    struct tm tm_info = {0};
+    strptime(str_val->string, format, &tm_info);
+    time_t t = mktime(&tm_info);
+    return torq_float((double)t);
+}
+
+TorqValue* torq_time_diff(TorqValue* a, TorqValue* b) {
+    double ta = (a && a->type == TV_FLOAT) ? a->floating : (a && a->type == TV_INT) ? (double)a->integer : 0.0;
+    double tb = (b && b->type == TV_FLOAT) ? b->floating : (b && b->type == TV_INT) ? (double)b->integer : 0.0;
+    return torq_float(ta - tb);
+}
+
+TorqValue* torq_time_add(TorqValue* ts, TorqValue* seconds) {
+    double t = (ts && ts->type == TV_FLOAT) ? ts->floating : (ts && ts->type == TV_INT) ? (double)ts->integer : 0.0;
+    double s = (seconds && seconds->type == TV_FLOAT) ? seconds->floating : (seconds && seconds->type == TV_INT) ? (double)seconds->integer : 0.0;
+    return torq_float(t + s);
+}
+
+void torq_time_sleep(TorqValue* seconds) {
+    double s = 0.0;
+    if (seconds && seconds->type == TV_FLOAT) s = seconds->floating;
+    else if (seconds && seconds->type == TV_INT) s = (double)seconds->integer;
+    if (s > 0) {
+        struct timespec req;
+        req.tv_sec = (time_t)s;
+        req.tv_nsec = (long)((s - (double)req.tv_sec) * 1e9);
+        nanosleep(&req, NULL);
+    }
+}
+
+// ===== HTTP client (via fork/exec curl) =====
+
+static TorqValue* http_request(const char* method, TorqValue* url, TorqValue* body) {
+    if (!url || url->type != TV_STR) return torq_null();
+
+    char temp_path[] = "/tmp/torq_http_XXXXXX";
+    int fd = mkstemp(temp_path);
+    if (fd < 0) return torq_null();
+    close(fd);
+
+    // Build curl command
+    char cmd[4096];
+    if (body && body->type == TV_STR) {
+        snprintf(cmd, sizeof(cmd),
+            "curl -s -X %s -H 'Content-Type: application/json' -d '%s' -o '%s' -w '%%{http_code}' '%s' 2>/dev/null",
+            method, body->string, temp_path, url->string);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "curl -s -X %s -o '%s' -w '%%{http_code}' '%s' 2>/dev/null",
+            method, temp_path, url->string);
+    }
+
+    FILE* fp = popen(cmd, "r");
+    if (!fp) { unlink(temp_path); return torq_null(); }
+
+    char status_buf[16];
+    if (!fgets(status_buf, sizeof(status_buf), fp)) status_buf[0] = '0';
+    pclose(fp);
+
+    // Read response body
+    FILE* f = fopen(temp_path, "r");
+    if (!f) { unlink(temp_path); return torq_null(); }
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* response_body = (char*)malloc(len + 1);
+    fread(response_body, 1, len, f);
+    response_body[len] = '\0';
+    fclose(f);
+    unlink(temp_path);
+
+    // Return dict with status and body
+    TorqValue* result = torq_dict_new();
+    torq_dict_set_mut(result, "status", torq_int(atoi(status_buf)));
+    torq_dict_set_mut(result, "body", torq_str(response_body));
+    free(response_body);
+    return result;
+}
+
+TorqValue* torq_http_get(TorqValue* url) { return http_request("GET", url, NULL); }
+TorqValue* torq_http_post(TorqValue* url, TorqValue* body) { return http_request("POST", url, body); }
+TorqValue* torq_http_put(TorqValue* url, TorqValue* body) { return http_request("PUT", url, body); }
+TorqValue* torq_http_delete(TorqValue* url) { return http_request("DELETE", url, NULL); }
+
+// ===== Crypto: SHA-256 =====
+
+// Minimal SHA-256 implementation
+static const uint32_t sha256_k[64] = {
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+};
+
+#define SHA256_ROTR(x,n) (((x)>>(n))|((x)<<(32-(n))))
+#define SHA256_CH(x,y,z) (((x)&(y))^((~(x))&(z)))
+#define SHA256_MAJ(x,y,z) (((x)&(y))^((x)&(z))^((y)&(z)))
+#define SHA256_S0(x) (SHA256_ROTR(x,2)^SHA256_ROTR(x,13)^SHA256_ROTR(x,22))
+#define SHA256_S1(x) (SHA256_ROTR(x,6)^SHA256_ROTR(x,11)^SHA256_ROTR(x,25))
+#define SHA256_s0(x) (SHA256_ROTR(x,7)^SHA256_ROTR(x,18)^((x)>>3))
+#define SHA256_s1(x) (SHA256_ROTR(x,17)^SHA256_ROTR(x,19)^((x)>>10))
+
+static void sha256_hash(const uint8_t* data, size_t len, uint8_t out[32]) {
+    uint32_t h[8] = {
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+    };
+
+    // Padding
+    size_t padded_len = ((len + 8) / 64 + 1) * 64;
+    uint8_t* msg = (uint8_t*)calloc(padded_len, 1);
+    memcpy(msg, data, len);
+    msg[len] = 0x80;
+    uint64_t bits = (uint64_t)len * 8;
+    for (int i = 0; i < 8; i++) msg[padded_len - 1 - i] = (uint8_t)(bits >> (i * 8));
+
+    for (size_t offset = 0; offset < padded_len; offset += 64) {
+        uint32_t w[64];
+        for (int i = 0; i < 16; i++)
+            w[i] = ((uint32_t)msg[offset+i*4]<<24) | ((uint32_t)msg[offset+i*4+1]<<16) |
+                    ((uint32_t)msg[offset+i*4+2]<<8) | (uint32_t)msg[offset+i*4+3];
+        for (int i = 16; i < 64; i++)
+            w[i] = SHA256_s1(w[i-2]) + w[i-7] + SHA256_s0(w[i-15]) + w[i-16];
+
+        uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+        for (int i = 0; i < 64; i++) {
+            uint32_t t1 = hh + SHA256_S1(e) + SHA256_CH(e,f,g) + sha256_k[i] + w[i];
+            uint32_t t2 = SHA256_S0(a) + SHA256_MAJ(a,b,c);
+            hh=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+        }
+        h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
+    }
+    free(msg);
+
+    for (int i = 0; i < 8; i++) {
+        out[i*4] = (uint8_t)(h[i]>>24); out[i*4+1] = (uint8_t)(h[i]>>16);
+        out[i*4+2] = (uint8_t)(h[i]>>8); out[i*4+3] = (uint8_t)h[i];
+    }
+}
+
+TorqValue* torq_crypto_hash(TorqValue* algo, TorqValue* data) {
+    if (!data || data->type != TV_STR) return torq_null();
+    // Only SHA-256 supported currently
+    uint8_t hash[32];
+    sha256_hash((const uint8_t*)data->string, strlen(data->string), hash);
+    char hex[65];
+    for (int i = 0; i < 32; i++) sprintf(hex + i*2, "%02x", hash[i]);
+    hex[64] = '\0';
+    return torq_str(hex);
+}
+
+TorqValue* torq_crypto_uuid(void) {
+    // UUID v4: random with version and variant bits set
+    uint8_t bytes[16];
+    FILE* f = fopen("/dev/urandom", "r");
+    if (f) { fread(bytes, 1, 16, f); fclose(f); }
+    else { for (int i = 0; i < 16; i++) bytes[i] = (uint8_t)(rand() & 0xff); }
+
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;  // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;  // variant 1
+
+    char uuid[37];
+    snprintf(uuid, sizeof(uuid),
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],
+        bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]);
+    return torq_str(uuid);
+}
+
+// ===== Extended logging =====
+
+void torq_log_info(TorqValue* v) {
+    TorqValue* s = torq_to_string(v);
+    fprintf(stderr, "[INFO] %s\n", s->string);
+}
+
+void torq_log_warn(TorqValue* v) {
+    TorqValue* s = torq_to_string(v);
+    fprintf(stderr, "[WARN] %s\n", s->string);
+}
+
+void torq_log_err(TorqValue* v) {
+    TorqValue* s = torq_to_string(v);
+    fprintf(stderr, "[ERROR] %s\n", s->string);
+}
+
+void torq_log_debug(TorqValue* v) {
+    TorqValue* s = torq_to_string(v);
+    fprintf(stderr, "[DEBUG] %s\n", s->string);
+}
+
+// ===== Math extras =====
+
+TorqValue* torq_math_random(void) {
+    // Random float between 0.0 and 1.0
+    FILE* f = fopen("/dev/urandom", "r");
+    uint32_t r = 0;
+    if (f) { fread(&r, sizeof(r), 1, f); fclose(f); }
+    else { r = (uint32_t)rand(); }
+    return torq_float((double)r / (double)UINT32_MAX);
+}
+
+// ===== String extras =====
+
+TorqValue* torq_str_repeat(TorqValue* s, TorqValue* count) {
+    if (!s || s->type != TV_STR || !count) return torq_str("");
+    int64_t n = (count->type == TV_INT) ? count->integer : 0;
+    if (n <= 0) return torq_str("");
+    size_t slen = strlen(s->string);
+    char* buf = (char*)malloc(slen * n + 1);
+    buf[0] = '\0';
+    for (int64_t i = 0; i < n; i++) strcat(buf, s->string);
+    TorqValue* result = torq_str(buf);
+    free(buf);
+    return result;
+}
+
+TorqValue* torq_str_pad_left(TorqValue* s, TorqValue* width, TorqValue* fill) {
+    if (!s || s->type != TV_STR) return torq_str("");
+    int64_t w = (width && width->type == TV_INT) ? width->integer : 0;
+    const char* fc = (fill && fill->type == TV_STR) ? fill->string : " ";
+    size_t slen = strlen(s->string);
+    if ((int64_t)slen >= w) return s;
+    size_t pad = (size_t)(w - (int64_t)slen);
+    char* buf = (char*)malloc(w + 1);
+    size_t flen = strlen(fc);
+    for (size_t i = 0; i < pad; i++) buf[i] = fc[i % flen];
+    memcpy(buf + pad, s->string, slen);
+    buf[w] = '\0';
+    TorqValue* result = torq_str(buf);
+    free(buf);
+    return result;
+}
+
+TorqValue* torq_str_pad_right(TorqValue* s, TorqValue* width, TorqValue* fill) {
+    if (!s || s->type != TV_STR) return torq_str("");
+    int64_t w = (width && width->type == TV_INT) ? width->integer : 0;
+    const char* fc = (fill && fill->type == TV_STR) ? fill->string : " ";
+    size_t slen = strlen(s->string);
+    if ((int64_t)slen >= w) return s;
+    char* buf = (char*)malloc(w + 1);
+    memcpy(buf, s->string, slen);
+    size_t flen = strlen(fc);
+    for (size_t i = slen; i < (size_t)w; i++) buf[i] = fc[(i - slen) % flen];
+    buf[w] = '\0';
+    TorqValue* result = torq_str(buf);
+    free(buf);
+    return result;
+}
+
+// ===== Array extras =====
+
+TorqValue* torq_array_reduce(TorqValue* arr, TorqValue* initial, TorqValue* (*fn)(TorqValue*, TorqValue*)) {
+    if (!arr || arr->type != TV_ARRAY) return initial ? initial : torq_null();
+    TorqValue* acc = initial ? initial : (arr->array->length > 0 ? arr->array->elements[0] : torq_null());
+    int64_t start = initial ? 0 : 1;
+    for (int64_t i = start; i < arr->array->length; i++) {
+        acc = fn(acc, arr->array->elements[i]);
+    }
+    return acc;
+}
+
+TorqValue* torq_array_zip(TorqValue* a, TorqValue* b) {
+    if (!a || a->type != TV_ARRAY || !b || b->type != TV_ARRAY) return torq_array_new();
+    int64_t len = a->array->length < b->array->length ? a->array->length : b->array->length;
+    TorqValue* result = torq_array_new();
+    for (int64_t i = 0; i < len; i++) {
+        TorqValue* pair = torq_array_new();
+        torq_array_push_mut(pair, a->array->elements[i]);
+        torq_array_push_mut(pair, b->array->elements[i]);
+        torq_array_push_mut(result, pair);
+    }
+    return result;
+}
+
+// ===== Assert (for test framework) =====
+
+void torq_assert(TorqValue* condition, TorqValue* message) {
+    if (!torq_is_truthy(condition)) {
+        const char* msg = (message && message->type == TV_STR) ? message->string : "assertion failed";
+        fprintf(stderr, "ASSERT FAILED: %s\n", msg);
+        exit(1);
+    }
+}
+
+void torq_assert_eq(TorqValue* a, TorqValue* b) {
+    TorqValue* eq = torq_eq(a, b);
+    if (!torq_is_truthy(eq)) {
+        TorqValue* sa = torq_to_string(a);
+        TorqValue* sb = torq_to_string(b);
+        fprintf(stderr, "ASSERT_EQ FAILED: %s != %s\n", sa->string, sb->string);
+        exit(1);
+    }
 }

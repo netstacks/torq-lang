@@ -769,3 +769,62 @@ fn sequential_each_still_works() {
     let output = compile_and_run(src);
     assert_eq!(output.trim(), "1\n2\n3");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8: Full stdlib tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn time_now_returns_float() {
+    let src = "::main\n  time_now | type_of | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "float");
+}
+
+#[test]
+fn time_unix_returns_int() {
+    let src = "::main\n  time_unix | type_of | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "int");
+}
+
+#[test]
+fn crypto_uuid_format() {
+    let src = "::main\n  crypto_uuid | print\n";
+    let output = compile_and_run(src);
+    let uuid = output.trim();
+    // UUID v4 format: 8-4-4-4-12 hex chars
+    assert_eq!(uuid.len(), 36);
+    assert_eq!(uuid.chars().nth(8), Some('-'));
+    assert_eq!(uuid.chars().nth(13), Some('-'));
+}
+
+#[test]
+fn crypto_hash_sha256() {
+    let src = "::main\n  \"hello\" | crypto_hash \"sha256\" | print\n";
+    let output = compile_and_run(src);
+    // SHA-256 of "hello" is well-known
+    assert_eq!(output.trim(), "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+}
+
+#[test]
+fn math_random_returns_float() {
+    let src = "::main\n  math_random | type_of | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "float");
+}
+
+#[test]
+fn time_sleep_works() {
+    // Sleep 0 seconds should work without error
+    let src = "::main\n  time_sleep 0\n  \"done\" | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "done");
+}
+
+#[test]
+fn assert_eq_passes() {
+    let src = "::main\n  assert_eq 42 42\n  \"passed\" | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "passed");
+}
