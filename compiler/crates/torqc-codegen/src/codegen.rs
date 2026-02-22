@@ -141,6 +141,8 @@ struct RuntimeFuncs {
     torq_dict_get_tv: FuncId,     // (ptr, ptr) -> ptr  (TorqValue* key wrapper)
     // Power
     torq_pow: FuncId,             // (ptr, ptr) -> ptr
+    // Unified reverse (dispatches on type)
+    torq_reverse: FuncId,         // (ptr) -> ptr
     // System
     torq_sys_exec: FuncId,        // (ptr) -> ptr
     torq_type_of: FuncId,         // (ptr) -> ptr
@@ -507,6 +509,11 @@ impl Compiler {
             .declare_function("torq_dict_get_tv", Linkage::Import, &sig_pp_to_ptr)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_dict_get_tv: {}", e)))?;
 
+        // Unified reverse
+        let torq_reverse = self.module
+            .declare_function("torq_reverse", Linkage::Import, &sig_ptr_to_ptr)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_reverse: {}", e)))?;
+
         // Power operator
         let torq_pow = self.module
             .declare_function("torq_pow", Linkage::Import, &sig_pp_to_ptr)
@@ -602,6 +609,7 @@ impl Compiler {
             torq_dict_values,
             torq_dict_has_tv,
             torq_dict_get_tv,
+            torq_reverse,
             torq_pow,
             torq_sys_exec,
             torq_type_of,
@@ -1028,7 +1036,7 @@ impl Compiler {
                 }
                 Expr::Call(call) if call.name == "reverse" && call.args.is_empty() => {
                     if let Some(val) = pipe_val {
-                        let func_ref = self.module.declare_func_in_func(rt.torq_str_reverse, builder.func);
+                        let func_ref = self.module.declare_func_in_func(rt.torq_reverse, builder.func);
                         let inst = builder.ins().call(func_ref, &[val]);
                         pipe_val = Some(builder.inst_results(inst)[0]);
                     }
@@ -1489,15 +1497,46 @@ impl Compiler {
 
                 for arm in &m.arms {
                     match &arm.pattern {
-                        Pattern::Literal(Literal::Int(n, _)) => {
+                        Pattern::Literal(lit) => {
                             let arm_block = builder.create_block();
                             let next_block = builder.create_block();
 
-                            // Create pattern value as TorqValue*
-                            let pat_raw = builder.ins().iconst(types::I64, *n);
-                            let int_fn = self.module.declare_func_in_func(rt.torq_int, builder.func);
-                            let inst = builder.ins().call(int_fn, &[pat_raw]);
-                            let pat_val = builder.inst_results(inst)[0];
+                            // Create pattern value as TorqValue* based on literal type
+                            let pat_val = match lit {
+                                Literal::Int(n, _) => {
+                                    let pat_raw = builder.ins().iconst(types::I64, *n);
+                                    let int_fn = self.module.declare_func_in_func(rt.torq_int, builder.func);
+                                    let inst = builder.ins().call(int_fn, &[pat_raw]);
+                                    builder.inst_results(inst)[0]
+                                }
+                                Literal::String(s, _) => {
+                                    let pointer_type = self.module.target_config().pointer_type();
+                                    let data_id = create_string_data(&mut self.module, &mut self.str_counter, s)?;
+                                    let gv = self.module.declare_data_in_func(data_id, builder.func);
+                                    let ptr = builder.ins().global_value(pointer_type, gv);
+                                    let str_fn = self.module.declare_func_in_func(rt.torq_str, builder.func);
+                                    let inst = builder.ins().call(str_fn, &[ptr]);
+                                    builder.inst_results(inst)[0]
+                                }
+                                Literal::Bool(b, _) => {
+                                    let val = builder.ins().iconst(I64, if *b { 1 } else { 0 });
+                                    let bool_fn = self.module.declare_func_in_func(rt.torq_bool, builder.func);
+                                    let inst = builder.ins().call(bool_fn, &[val]);
+                                    builder.inst_results(inst)[0]
+                                }
+                                Literal::Float(f, _) => {
+                                    let val = builder.ins().f64const(*f);
+                                    let float_fn = self.module.declare_func_in_func(rt.torq_float, builder.func);
+                                    let inst = builder.ins().call(float_fn, &[val]);
+                                    builder.inst_results(inst)[0]
+                                }
+                                Literal::Null(_) => {
+                                    let null_fn = self.module.declare_func_in_func(rt.torq_null, builder.func);
+                                    let inst = builder.ins().call(null_fn, &[]);
+                                    builder.inst_results(inst)[0]
+                                }
+                                _ => return Err(CodegenError::new("unsupported literal in match pattern")),
+                            };
 
                             // Compare: torq_eq(subject, pattern) -> TorqValue* bool
                             let eq_fn = self.module.declare_func_in_func(rt.torq_eq, builder.func);
@@ -1523,6 +1562,54 @@ impl Compiler {
                             builder.switch_to_block(next_block);
                             builder.seal_block(next_block);
                         }
+                        Pattern::Comparison(op, rhs_expr) => {
+                            let arm_block = builder.create_block();
+                            let next_block = builder.create_block();
+
+                            // Compile the RHS expression of the comparison
+                            let rhs = self.compile_expr(rhs_expr, rt, builder, None)?;
+
+                            // Select comparison function based on operator
+                            let cmp_func_id = match op {
+                                torqc_ast::ast::ComparisonOp::Gt => rt.torq_gt,
+                                torqc_ast::ast::ComparisonOp::Lt => rt.torq_lt,
+                                torqc_ast::ast::ComparisonOp::GtEq => rt.torq_gte,
+                                torqc_ast::ast::ComparisonOp::LtEq => rt.torq_lte,
+                                torqc_ast::ast::ComparisonOp::Eq => rt.torq_eq,
+                                torqc_ast::ast::ComparisonOp::NotEq => rt.torq_neq,
+                            };
+
+                            let cmp_fn = self.module.declare_func_in_func(cmp_func_id, builder.func);
+                            let inst = builder.ins().call(cmp_fn, &[subject, rhs]);
+                            let cmp_result = builder.inst_results(inst)[0];
+
+                            let truthy_fn = self.module.declare_func_in_func(rt.torq_is_truthy, builder.func);
+                            let inst = builder.ins().call(truthy_fn, &[cmp_result]);
+                            let cmp = builder.inst_results(inst)[0];
+
+                            builder.ins().brif(cmp, arm_block, &[], next_block, &[]);
+
+                            builder.switch_to_block(arm_block);
+                            builder.seal_block(arm_block);
+                            let result = self.compile_expr(&arm.body, rt, builder, None)?;
+                            if !block_is_terminated(builder) {
+                                builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
+                            }
+
+                            builder.switch_to_block(next_block);
+                            builder.seal_block(next_block);
+                        }
+                        Pattern::Variable(var) => {
+                            // Bind the subject to the variable name, then execute body
+                            let cl_var = builder.declare_var(I64);
+                            builder.def_var(cl_var, subject);
+                            self.variables.insert(var.name.clone(), cl_var);
+
+                            let result = self.compile_expr(&arm.body, rt, builder, None)?;
+                            if !block_is_terminated(builder) {
+                                builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
+                            }
+                        }
                         Pattern::Wildcard => {
                             let result = self.compile_expr(&arm.body, rt, builder, None)?;
                             if !block_is_terminated(builder) {
@@ -1530,7 +1617,10 @@ impl Compiler {
                             }
                         }
                         _ => {
-                            return Err(CodegenError::new("unsupported match pattern in Phase 4"));
+                            return Err(CodegenError::new(format!(
+                                "unsupported match pattern: {:?}",
+                                arm.pattern
+                            )));
                         }
                     }
                 }

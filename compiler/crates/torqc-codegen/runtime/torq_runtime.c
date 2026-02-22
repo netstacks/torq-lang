@@ -941,6 +941,13 @@ TorqValue* torq_array_reverse(TorqValue* arr) {
     return result;
 }
 
+TorqValue* torq_reverse(TorqValue* v) {
+    if (!v) return torq_null();
+    if (v->type == TV_ARRAY) return torq_array_reverse(v);
+    if (v->type == TV_STR) return torq_str_reverse(v);
+    return v;
+}
+
 TorqValue* torq_array_sum(TorqValue* arr) {
     if (!arr || arr->type != TV_ARRAY) return torq_int(0);
     int64_t isum = 0;

@@ -677,3 +677,63 @@ fn json_roundtrip() {
     let output = compile_and_run(src);
     assert!(output.contains("\"name\"") && output.contains("\"alice\""));
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5.5: Match pattern expansion tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn match_string_pattern() {
+    let src = "::main\n  \"red\" | match\n    \"red\" -> \"stop\"\n    \"green\" -> \"go\"\n    _ -> \"unknown\"\n  | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "stop");
+}
+
+#[test]
+fn match_string_pattern_fallthrough() {
+    let src = "::main\n  \"blue\" | match\n    \"red\" -> \"stop\"\n    \"green\" -> \"go\"\n    _ -> \"unknown\"\n  | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "unknown");
+}
+
+#[test]
+fn match_bool_pattern() {
+    let src = "::main\n  true | match\n    true -> \"yes\"\n    false -> \"no\"\n    _ -> \"maybe\"\n  | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "yes");
+}
+
+#[test]
+fn match_bool_false_pattern() {
+    let src = "::main\n  false | match\n    true -> \"yes\"\n    false -> \"no\"\n    _ -> \"maybe\"\n  | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "no");
+}
+
+#[test]
+fn match_comparison_gt() {
+    let src = "::main\n  15 | match\n    > 10 -> \"big\"\n    _ -> \"small\"\n  | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "big");
+}
+
+#[test]
+fn match_comparison_lt() {
+    let src = "::main\n  3 | match\n    < 5 -> \"small\"\n    _ -> \"big\"\n  | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "small");
+}
+
+#[test]
+fn match_comparison_gte() {
+    let src = "::main\n  10 | match\n    >= 10 -> \"enough\"\n    _ -> \"not enough\"\n  | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "enough");
+}
+
+#[test]
+fn match_comparison_chain() {
+    let src = "::main\n  75 | match\n    >= 90 -> \"A\"\n    >= 80 -> \"B\"\n    >= 70 -> \"C\"\n    _ -> \"F\"\n  | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "C");
+}
