@@ -143,6 +143,9 @@ struct RuntimeFuncs {
     torq_pow: FuncId,             // (ptr, ptr) -> ptr
     // Unified reverse (dispatches on type)
     torq_reverse: FuncId,         // (ptr) -> ptr
+    // Parallel each
+    torq_parallel_each_array: FuncId,  // (ptr, ptr) -> void
+    torq_parallel_each_range: FuncId,  // (i64, i64, ptr) -> void
     // System
     torq_sys_exec: FuncId,        // (ptr) -> ptr
     torq_type_of: FuncId,         // (ptr) -> ptr
@@ -160,6 +163,8 @@ pub struct Compiler {
     block_funcs: HashMap<String, (FuncId, usize)>,
     /// Stack of loop exit blocks for resolving `break` statements.
     loop_exit_stack: Vec<cranelift_codegen::ir::Block>,
+    /// Counter for generating unique parallel-each body function names.
+    each_body_counter: usize,
 }
 
 impl Compiler {
@@ -193,6 +198,7 @@ impl Compiler {
             variables: HashMap::new(),
             block_funcs: HashMap::new(),
             loop_exit_stack: Vec::new(),
+            each_body_counter: 0,
         })
     }
 
@@ -514,6 +520,23 @@ impl Compiler {
             .declare_function("torq_reverse", Linkage::Import, &sig_ptr_to_ptr)
             .map_err(|e| CodegenError::new(format!("failed to declare torq_reverse: {}", e)))?;
 
+        // Parallel each: torq_parallel_each_array(ptr_array, ptr_fn_ptr) -> void
+        let mut sig_pp_to_void_par = self.module.make_signature();
+        sig_pp_to_void_par.params.push(AbiParam::new(ptr));
+        sig_pp_to_void_par.params.push(AbiParam::new(ptr));
+        let torq_parallel_each_array = self.module
+            .declare_function("torq_parallel_each_array", Linkage::Import, &sig_pp_to_void_par)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_parallel_each_array: {}", e)))?;
+
+        // Parallel each range: torq_parallel_each_range(i64_start, i64_end, ptr_fn_ptr) -> void
+        let mut sig_iip_to_void = self.module.make_signature();
+        sig_iip_to_void.params.push(AbiParam::new(I64));
+        sig_iip_to_void.params.push(AbiParam::new(I64));
+        sig_iip_to_void.params.push(AbiParam::new(ptr));
+        let torq_parallel_each_range = self.module
+            .declare_function("torq_parallel_each_range", Linkage::Import, &sig_iip_to_void)
+            .map_err(|e| CodegenError::new(format!("failed to declare torq_parallel_each_range: {}", e)))?;
+
         // Power operator
         let torq_pow = self.module
             .declare_function("torq_pow", Linkage::Import, &sig_pp_to_ptr)
@@ -610,6 +633,8 @@ impl Compiler {
             torq_dict_has_tv,
             torq_dict_get_tv,
             torq_reverse,
+            torq_parallel_each_array,
+            torq_parallel_each_range,
             torq_pow,
             torq_sys_exec,
             torq_type_of,
@@ -859,7 +884,102 @@ impl Compiler {
             }
             Statement::Each(each) => {
                 if !each.sequential {
-                    return Err(CodegenError::new("parallel each not yet supported"));
+                    // === Parallel each ===
+                    // Compile the body as a separate function and pass it to the runtime.
+
+                    let is_range = matches!(&*each.iterable, Expr::Call(call) if call.name == "range" && call.args.len() == 2);
+
+                    // 1. Declare & define the body function: fn(TorqValue*) -> TorqValue*
+                    let body_name = format!("torq_each_body_{}", self.each_body_counter);
+                    self.each_body_counter += 1;
+
+                    let ptr_ty = self.module.target_config().pointer_type();
+                    let mut body_sig = self.module.make_signature();
+                    body_sig.params.push(AbiParam::new(ptr_ty)); // element
+                    body_sig.returns.push(AbiParam::new(ptr_ty));
+
+                    let body_func_id = self.module
+                        .declare_function(&body_name, Linkage::Local, &body_sig)
+                        .map_err(|e| CodegenError::new(format!("failed to declare parallel each body: {}", e)))?;
+
+                    // Save outer variable scope
+                    let saved_vars = self.variables.clone();
+                    self.variables.clear();
+
+                    // Build the body function
+                    {
+                        let mut body_ctx = self.module.make_context();
+                        body_ctx.func.signature = body_sig;
+                        let mut body_func_ctx = FunctionBuilderContext::new();
+                        let mut body_builder = FunctionBuilder::new(&mut body_ctx.func, &mut body_func_ctx);
+
+                        let body_entry = body_builder.create_block();
+                        body_builder.append_block_params_for_function_params(body_entry);
+                        body_builder.switch_to_block(body_entry);
+                        body_builder.seal_block(body_entry);
+
+                        // Bind the element parameter to the each binding variable
+                        let elem_param = body_builder.block_params(body_entry)[0];
+                        let cl_var = body_builder.declare_var(I64);
+                        body_builder.def_var(cl_var, elem_param);
+                        self.variables.insert(each.binding.name.clone(), cl_var);
+
+                        // Compile body statements
+                        let mut last_val: Option<Value> = None;
+                        for stmt in &each.body {
+                            let r = self.compile_statement(stmt, rt, &mut body_builder)?;
+                            if r.is_some() {
+                                last_val = r;
+                            }
+                        }
+
+                        // Return last value or null
+                        if !block_is_terminated(&body_builder) {
+                            let ret = match last_val {
+                                Some(v) => v,
+                                None => {
+                                    let null_fn = self.module.declare_func_in_func(rt.torq_null, body_builder.func);
+                                    let inst = body_builder.ins().call(null_fn, &[]);
+                                    body_builder.inst_results(inst)[0]
+                                }
+                            };
+                            body_builder.ins().return_(&[ret]);
+                        }
+
+                        body_builder.finalize();
+                        self.module
+                            .define_function(body_func_id, &mut body_ctx)
+                            .map_err(|e| CodegenError::new(format!("failed to define parallel each body: {}", e)))?;
+                    }
+
+                    // Restore outer scope
+                    self.variables = saved_vars;
+
+                    // 2. Get function pointer and call runtime
+                    let body_func_ref = self.module.declare_func_in_func(body_func_id, builder.func);
+                    let body_fn_ptr = builder.ins().func_addr(ptr_ty, body_func_ref);
+
+                    if is_range {
+                        if let Expr::Call(call) = &*each.iterable {
+                            let start_ptr = self.compile_expr(&call.args[0], rt, builder, None)?;
+                            let end_ptr = self.compile_expr(&call.args[1], rt, builder, None)?;
+                            let as_int_fn = self.module.declare_func_in_func(rt.torq_as_int, builder.func);
+                            let inst = builder.ins().call(as_int_fn, &[start_ptr]);
+                            let start = builder.inst_results(inst)[0];
+                            let as_int_fn2 = self.module.declare_func_in_func(rt.torq_as_int, builder.func);
+                            let inst = builder.ins().call(as_int_fn2, &[end_ptr]);
+                            let end = builder.inst_results(inst)[0];
+
+                            let par_range_fn = self.module.declare_func_in_func(rt.torq_parallel_each_range, builder.func);
+                            builder.ins().call(par_range_fn, &[start, end, body_fn_ptr]);
+                        }
+                    } else {
+                        let arr = self.compile_expr(&each.iterable, rt, builder, None)?;
+                        let par_arr_fn = self.module.declare_func_in_func(rt.torq_parallel_each_array, builder.func);
+                        builder.ins().call(par_arr_fn, &[arr, body_fn_ptr]);
+                    }
+
+                    return Ok(None);
                 }
 
                 // Determine start/end values — range() or array iterable

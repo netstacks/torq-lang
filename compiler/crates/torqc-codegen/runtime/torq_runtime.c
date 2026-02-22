@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
+#include <pthread.h>
 
 // ===== Type system =====
 
@@ -1337,4 +1338,100 @@ TorqValue* torq_dict_get_tv(TorqValue* d, TorqValue* key) {
 TorqValue* torq_dict_has_tv(TorqValue* d, TorqValue* key) {
     if (!key || key->type != TV_STR) return torq_bool(0);
     return torq_dict_has(d, key->string);
+}
+
+// ===== Parallel each =====
+
+typedef TorqValue* (*TorqEachBodyFn)(TorqValue*);
+
+typedef struct {
+    TorqEachBodyFn body_fn;
+    TorqValue* element;
+} TorqThreadArg;
+
+static void* torq_thread_worker(void* arg) {
+    TorqThreadArg* ta = (TorqThreadArg*)arg;
+    ta->body_fn(ta->element);
+    return NULL;
+}
+
+void torq_parallel_each_array(TorqValue* arr, TorqEachBodyFn body_fn) {
+    if (!arr || arr->type != TV_ARRAY || arr->array->length == 0) return;
+
+    int64_t n = arr->array->length;
+    pthread_t* threads = (pthread_t*)malloc(sizeof(pthread_t) * n);
+    TorqThreadArg* args = (TorqThreadArg*)malloc(sizeof(TorqThreadArg) * n);
+
+    for (int64_t i = 0; i < n; i++) {
+        args[i].body_fn = body_fn;
+        args[i].element = arr->array->elements[i];
+        pthread_create(&threads[i], NULL, torq_thread_worker, &args[i]);
+    }
+
+    for (int64_t i = 0; i < n; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    free(threads);
+    free(args);
+}
+
+void torq_parallel_each_range(int64_t start, int64_t end, TorqEachBodyFn body_fn) {
+    int64_t n = end - start;
+    if (n <= 0) return;
+
+    pthread_t* threads = (pthread_t*)malloc(sizeof(pthread_t) * n);
+    TorqThreadArg* args = (TorqThreadArg*)malloc(sizeof(TorqThreadArg) * n);
+
+    for (int64_t i = 0; i < n; i++) {
+        args[i].body_fn = body_fn;
+        args[i].element = torq_int(start + i);
+        pthread_create(&threads[i], NULL, torq_thread_worker, &args[i]);
+    }
+
+    for (int64_t i = 0; i < n; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    free(threads);
+    free(args);
+}
+
+// ===== Shared variables (thread-safe) =====
+
+typedef struct {
+    TorqValue* value;
+    pthread_mutex_t mutex;
+} TorqShared;
+
+TorqShared* torq_shared_new(TorqValue* initial) {
+    TorqShared* s = (TorqShared*)malloc(sizeof(TorqShared));
+    s->value = initial ? initial : torq_null();
+    pthread_mutex_init(&s->mutex, NULL);
+    return s;
+}
+
+TorqValue* torq_shared_read(TorqShared* s) {
+    if (!s) return torq_null();
+    pthread_mutex_lock(&s->mutex);
+    TorqValue* v = s->value;
+    pthread_mutex_unlock(&s->mutex);
+    return v;
+}
+
+void torq_shared_write(TorqShared* s, TorqValue* v) {
+    if (!s) return;
+    pthread_mutex_lock(&s->mutex);
+    s->value = v;
+    pthread_mutex_unlock(&s->mutex);
+}
+
+// Atomic add for *shared counters
+TorqValue* torq_shared_add(TorqShared* s, TorqValue* v) {
+    if (!s) return torq_null();
+    pthread_mutex_lock(&s->mutex);
+    s->value = torq_add(s->value, v);
+    TorqValue* result = s->value;
+    pthread_mutex_unlock(&s->mutex);
+    return result;
 }

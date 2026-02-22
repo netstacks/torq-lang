@@ -737,3 +737,35 @@ fn match_comparison_chain() {
     let output = compile_and_run(src);
     assert_eq!(output.trim(), "C");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6: Parallel each tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parallel_each_array_basic() {
+    // Parallel each over an array — each element gets printed (order may vary)
+    let src = "::main\n  @items = [10 20 30]\n  @items | each $item\n    $item | print\n";
+    let output = compile_and_run(src);
+    let mut lines: Vec<&str> = output.trim().lines().collect();
+    lines.sort();
+    assert_eq!(lines, vec!["10", "20", "30"]);
+}
+
+#[test]
+fn parallel_each_range_basic() {
+    // Parallel each over a range
+    let src = "::main\n  range 1 4 | each $i\n    $i | print\n";
+    let output = compile_and_run(src);
+    let mut lines: Vec<&str> = output.trim().lines().collect();
+    lines.sort();
+    assert_eq!(lines, vec!["1", "2", "3"]);
+}
+
+#[test]
+fn sequential_each_still_works() {
+    // Sequential each should still work as before
+    let src = "::main\n  @items = [1 2 3]\n  @items | each $item sequential\n    $item | print\n";
+    let output = compile_and_run(src);
+    assert_eq!(output.trim(), "1\n2\n3");
+}
